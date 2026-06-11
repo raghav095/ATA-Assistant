@@ -118,6 +118,27 @@ export default function AegisTriageApp() {
     }
   }, [chatHistory, isTyping]);
 
+  useEffect(() => {
+    // Load patient info from localStorage on mount
+    try {
+      const stored = localStorage.getItem('aegis_patient_info');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.name) {
+          setPatientInfo(parsed);
+          setCheckInInput(parsed);
+          setIsCheckedIn(true);
+          setSymptomProfile(prev => ({
+            ...prev,
+            history: parsed.preExistingHistory || ''
+          }));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load patient info from localStorage', e);
+    }
+  }, []);
+
   // Toast Trigger Helper
   const triggerToast = (message) => {
     setToastMessage(message);
@@ -708,6 +729,11 @@ export default function AegisTriageApp() {
                 history: checkInInput.preExistingHistory || ''
               }));
               setIsCheckedIn(true);
+              try {
+                localStorage.setItem('aegis_patient_info', JSON.stringify(checkInInput));
+              } catch (err) {
+                console.error('Failed to save patient info to localStorage', err);
+              }
               triggerToast(`Welcome, ${checkInInput.name}. Begin intake dialog.`);
             }}>
               <div className="checkin-body">
@@ -1088,12 +1114,31 @@ export default function AegisTriageApp() {
                   <span>📋</span>
                   <h3>Structured Patient Profile (Live Data Model)</h3>
                 </div>
-                <div className="profile-completion-meter" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-secondary)' }}>Intake Progress:</span>
-                  <div className="progress-bar-bg" style={{ width: '100px', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div className="progress-bar-fill" style={{ width: `${profileCompletion}%`, height: '100%', background: 'var(--color-self-care)', transition: 'width 0.4s ease' }}></div>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <button 
+                    onClick={() => {
+                      try {
+                        localStorage.removeItem('aegis_patient_info');
+                      } catch (err) {
+                        console.error(err);
+                      }
+                      setIsCheckedIn(false);
+                      setPatientInfo({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
+                      setCheckInInput({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
+                      triggerToast('Patient checked out successfully.');
+                    }} 
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem' }}
+                  >
+                    🔄 Switch Patient
+                  </button>
+                  <div className="profile-completion-meter" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-secondary)' }}>Intake Progress:</span>
+                    <div className="progress-bar-bg" style={{ width: '100px', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div className="progress-bar-fill" style={{ width: `${profileCompletion}%`, height: '100%', background: 'var(--color-self-care)', transition: 'width 0.4s ease' }}></div>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--color-self-care)' }}>{profileCompletion}%</span>
                   </div>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--color-self-care)' }}>{profileCompletion}%</span>
                 </div>
               </div>
               
