@@ -1,6 +1,43 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  MessageSquare,
+  ClipboardList,
+  Stethoscope,
+  Shield,
+  Sliders,
+  Mic,
+  MicOff,
+  Image as ImageIcon,
+  Send,
+  RefreshCw,
+  Phone,
+  PhoneOff,
+  X,
+  LogOut,
+  Plus,
+  CheckCircle2,
+  AlertTriangle,
+  Activity,
+  Sparkles,
+  Volume2,
+  Copy,
+  Printer,
+  ChevronRight,
+  User,
+  Cake,
+  Clock,
+  Zap,
+  ScrollText,
+  Tags,
+  HeartPulse,
+  RadioTower,
+  Check,
+  AlertOctagon,
+  FileText,
+  PlayCircle
+} from 'lucide-react';
 
 // Predefined Triage Guidelines
 const urgencyGuidelines = {
@@ -789,7 +826,10 @@ export default function AegisTriageApp() {
                 </div>
               </div>
               <div className="checkin-footer">
-                <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem 2.5rem' }}>Complete Check-In ➔</button>
+                <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem 2.5rem' }}>
+                  Complete Check-In
+                  <ChevronRight size={16} strokeWidth={2.4} style={{ marginLeft: '0.4rem' }} />
+                </button>
               </div>
             </form>
           </div>
@@ -801,9 +841,9 @@ export default function AegisTriageApp() {
         {toastMessage}
       </div>
 
-      {/* Left Sidebar */}
-      <aside className="app-sidebar">
-        <div className="sidebar-brand">
+      {/* Top App Bar */}
+      <header className="app-topbar">
+        <div className="topbar-brand">
           <div className="heartbeat-logo">
             <svg className={`ecg-logo-svg urgency-${currentUrgency.replace(/[\s&]+/g, '-')}`} viewBox="0 0 100 40">
               <path className="ecg-line" d="M0,20 L30,20 L35,10 L40,30 L45,5 L50,35 L55,20 L60,20 L65,15 L70,25 L75,20 L100,20"></path>
@@ -815,31 +855,43 @@ export default function AegisTriageApp() {
           </div>
         </div>
 
-        <nav className="sidebar-nav">
-          <ul>
-            <li className={`nav-item ${activeTab === 'tab-chat' ? 'active' : ''}`} onClick={() => switchTab('tab-chat')}>
-              <span className="nav-icon">💬</span>
-              <span className="nav-label">Intake Dialogue</span>
-            </li>
-            <li className={`nav-item ${activeTab === 'tab-profile' ? 'active' : ''}`} onClick={() => switchTab('tab-profile')}>
-              <span className="nav-icon">📋</span>
-              <span className="nav-label">Patient Profile</span>
-            </li>
-            <li className={`nav-item ${activeTab === 'tab-pathway' ? 'active' : ''}`} onClick={() => switchTab('tab-pathway')}>
-              <span className="nav-icon">🩺</span>
-              <span className="nav-label">Triage & Pathway</span>
-            </li>
-            <li className={`nav-item ${activeTab === 'tab-guardrails' ? 'active' : ''}`} onClick={() => switchTab('tab-guardrails')}>
-              <span className="nav-icon">🛡️</span>
-              <span className="nav-label">Safety Guardrails</span>
-            </li>
-            <li className={`nav-item ${activeTab === 'tab-testing' ? 'active' : ''}`} onClick={() => switchTab('tab-testing')}>
-              <span className="nav-icon">🎛️</span>
-              <span className="nav-label">Validation Suite</span>
-            </li>
-          </ul>
+        <nav className="topbar-nav">
+          <div className="topbar-nav-track">
+            <div className="topbar-nav-indicator" style={{ transform: `translateX(${['tab-chat','tab-profile','tab-pathway','tab-guardrails','tab-testing'].indexOf(activeTab) * 100}%)` }}></div>
+            <button className={`topbar-nav-item ${activeTab === 'tab-chat' ? 'active' : ''}`} onClick={() => switchTab('tab-chat')}>
+              <MessageSquare size={16} strokeWidth={2.2} />
+              <span>Intake</span>
+            </button>
+            <button className={`topbar-nav-item ${activeTab === 'tab-profile' ? 'active' : ''}`} onClick={() => switchTab('tab-profile')}>
+              <ClipboardList size={16} strokeWidth={2.2} />
+              <span>Profile</span>
+            </button>
+            <button className={`topbar-nav-item ${activeTab === 'tab-pathway' ? 'active' : ''}`} onClick={() => switchTab('tab-pathway')}>
+              <Stethoscope size={16} strokeWidth={2.2} />
+              <span>Triage</span>
+            </button>
+            <button className={`topbar-nav-item ${activeTab === 'tab-guardrails' ? 'active' : ''}`} onClick={() => switchTab('tab-guardrails')}>
+              <Shield size={16} strokeWidth={2.2} />
+              <span>Guardrails</span>
+            </button>
+            <button className={`topbar-nav-item ${activeTab === 'tab-testing' ? 'active' : ''}`} onClick={() => switchTab('tab-testing')}>
+              <Sliders size={16} strokeWidth={2.2} />
+              <span>Validation</span>
+            </button>
+          </div>
         </nav>
-      </aside>
+
+        <div className="topbar-right">
+          <div className="topbar-status-pill">
+            <span className="status-dot green-pulse"></span>
+            <span>System Online</span>
+          </div>
+          <div className="topbar-urgency-pill">
+            <Activity size={14} strokeWidth={2.4} />
+            <span>{currentUrgency}</span>
+          </div>
+        </div>
+      </header>
 
       {/* Main Content Area */}
       <div className="main-content-panel">
@@ -853,6 +905,7 @@ export default function AegisTriageApp() {
               {activeTab === 'tab-guardrails' && "Safety Auditing Console"}
               {activeTab === 'tab-testing' && "Validation & Verification Deck"}
             </h1>
+            <Sparkles size={16} className="header-sparkle" strokeWidth={2.2} />
           </div>
 
           {/* Progress Tracker */}
@@ -889,12 +942,13 @@ export default function AegisTriageApp() {
               {voiceSessionActive ? (
                 /* Interactive Real-Time Voice Console */
                 <div className="voice-session-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '2.5rem', minHeight: '480px', background: 'radial-gradient(circle, rgba(28,28,30,0.65) 0%, rgba(10,10,12,0.95) 100%)', position: 'relative' }}>
-                  <button 
+                  <button
                     onClick={endVoiceSession}
                     className="btn btn-secondary btn-sm"
                     style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', borderColor: 'rgba(255,255,255,0.1)' }}
                   >
-                    ✕ Exit Session
+                    <X size={14} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                    Exit Session
                   </button>
 
                   <span style={{ fontSize: '0.7rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '1.5rem' }}>
@@ -904,9 +958,9 @@ export default function AegisTriageApp() {
                   <div className="voice-call-indicator-wrapper" style={{ position: 'relative', width: '140px', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '2rem' }}>
                     <div className={`voice-call-ring ${voiceSessionStatus}`} />
                     <div className="voice-call-center">
-                      {voiceSessionStatus === 'listening' && '🎙️'}
-                      {voiceSessionStatus === 'thinking' && '🧠'}
-                      {voiceSessionStatus === 'speaking' && '🔊'}
+                      {voiceSessionStatus === 'listening' && <Mic size={36} strokeWidth={1.8} />}
+                      {voiceSessionStatus === 'thinking' && <RadioTower size={36} strokeWidth={1.8} />}
+                      {voiceSessionStatus === 'speaking' && <Volume2 size={36} strokeWidth={1.8} />}
                     </div>
                   </div>
 
@@ -924,16 +978,17 @@ export default function AegisTriageApp() {
 
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
                     {voiceSessionStatus === 'listening' && (
-                      <button 
+                      <button
                         onClick={() => stopRecording(true)}
                         className="btn btn-primary"
                         style={{ padding: '0.75rem 2rem', borderRadius: '50px' }}
                       >
-                        Tap when Done Speaking ➔
+                        Tap when Done Speaking
+                        <ChevronRight size={16} strokeWidth={2.4} style={{ marginLeft: '0.4rem' }} />
                       </button>
                     )}
                     {voiceSessionStatus === 'speaking' && (
-                      <button 
+                      <button
                         onClick={() => {
                           if (currentAudioRef.current) {
                             currentAudioRef.current.pause();
@@ -944,7 +999,7 @@ export default function AegisTriageApp() {
                         className="btn btn-secondary btn-sm"
                         style={{ borderRadius: '50px' }}
                       >
-                        ⏭️ Skip and Speak
+                        Skip and Speak
                       </button>
                     )}
                     <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
@@ -959,26 +1014,32 @@ export default function AegisTriageApp() {
                 <>
                   <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div className="header-title-group">
-                      <span className="pulse-icon">🩺</span>
+                      <span className="pulse-icon"><Stethoscope size={18} strokeWidth={2.2} /></span>
                       <h3>Intake Dialogue Stream</h3>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button 
+                      <button
                         onClick={startVoiceSession}
                         className="btn btn-primary btn-sm"
                         style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
                         title="Start hands-free real-time voice triage session"
                       >
-                        🎙️ Voice Session
+                        <Phone size={14} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Voice Session
                       </button>
-                      <button onClick={handleReset} className="btn btn-secondary btn-sm">Reset Intake</button>
+                      <button onClick={handleReset} className="btn btn-secondary btn-sm">
+                        <RefreshCw size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Reset Intake
+                      </button>
                     </div>
                   </div>
 
                   <div className="chat-messages-container">
                     {chatHistory.map((msg, index) => (
                       <div key={index} className={`message ${msg.role}`}>
-                        <div className="message-avatar">{msg.role === 'user' ? '👤' : '🩺'}</div>
+                        <div className="message-avatar">
+                          {msg.role === 'user' ? <User size={16} strokeWidth={2.2} /> : <HeartPulse size={16} strokeWidth={2.2} />}
+                        </div>
                         <div className="message-content" style={{ position: 'relative', paddingRight: msg.role === 'assistant' ? '2.5rem' : '1.1rem' }}>
                           <p>{msg.content}</p>
                           {msg.image && (
@@ -987,35 +1048,21 @@ export default function AegisTriageApp() {
                             </div>
                           )}
                           {msg.role === 'assistant' && (
-                            <button 
+                            <button
+                              className="message-speak-btn"
                               onClick={() => speakText(msg.content)}
-                              style={{
-                                position: 'absolute',
-                                right: '0.6rem',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                background: 'transparent',
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontSize: '0.85rem',
-                                opacity: 0.5,
-                                transition: 'opacity 0.2s',
-                                padding: '0.2rem'
-                              }}
-                              onMouseEnter={(e) => e.target.style.opacity = 1}
-                              onMouseLeave={(e) => e.target.style.opacity = 0.5}
                               title="Speak message using GCP text-to-speech"
                             >
-                              🔊
+                              <Volume2 size={14} strokeWidth={2.2} />
                             </button>
                           )}
                         </div>
                       </div>
                     ))}
-                    
+
                     {isTyping && (
                       <div className="message assistant">
-                        <div className="message-avatar">🩺</div>
+                        <div className="message-avatar"><HeartPulse size={16} strokeWidth={2.2} /></div>
                         <div className="message-content">
                           <div className="typing-indicator">
                             <span></span><span></span><span></span>
@@ -1038,7 +1085,9 @@ export default function AegisTriageApp() {
                       <div className="image-preview-bar" style={{ marginBottom: '0.75rem', borderRadius: '8px' }}>
                         <div className="image-preview-thumbnail">
                           <img src={`data:${selectedImage.mimeType};base64,${selectedImage.base64}`} alt="Selected Preview" />
-                          <button type="button" className="image-preview-remove" onClick={() => setSelectedImage(null)}>✕</button>
+                          <button type="button" className="image-preview-remove" onClick={() => setSelectedImage(null)}>
+                            <X size={10} strokeWidth={2.6} />
+                          </button>
                         </div>
                         <div className="image-preview-info">
                           <span className="filename">{selectedImage.fileName}</span>
@@ -1047,7 +1096,7 @@ export default function AegisTriageApp() {
                       </div>
                     )}
                     <form onSubmit={(e) => { e.preventDefault(); sendMessage(userInput); }}>
-                      <button 
+                      <button
                         type="button"
                         onClick={isRecording ? () => stopRecording(false) : () => startRecording(false)}
                         className={`btn ${isRecording ? 'btn-danger-recording' : 'btn-secondary'}`}
@@ -1055,16 +1104,16 @@ export default function AegisTriageApp() {
                         disabled={isTyping}
                         title={isRecording ? 'Stop Recording' : 'Record symptoms via voice'}
                       >
-                        {isRecording ? '🛑' : '🎙️'}
+                        {isRecording ? <MicOff size={16} strokeWidth={2.4} /> : <Mic size={16} strokeWidth={2.4} />}
                       </button>
 
-                      <label 
+                      <label
                         className="btn-upload-label"
                         title="Upload clinical image (e.g. rash, cut, swelling)"
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', minWidth: '46px' }}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '46px' }}
                       >
-                        📷
-                        <input 
+                        <ImageIcon size={16} strokeWidth={2.2} />
+                        <input
                           type="file"
                           accept="image/*"
                           style={{ display: 'none' }}
@@ -1089,16 +1138,19 @@ export default function AegisTriageApp() {
                         />
                       </label>
 
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={userInput}
                         onChange={(e) => setUserInput(e.target.value)}
-                        placeholder={selectedImage ? "Add description or click Analyze..." : "Describe symptoms, severity, and duration..."} 
+                        placeholder={selectedImage ? "Add description or click Analyze..." : "Describe symptoms, severity, and duration..."}
                         disabled={isTyping || isRecording}
                         required={!selectedImage}
                         autoComplete="off"
                       />
-                      <button type="submit" className="btn btn-primary" disabled={isTyping || isRecording || (!userInput.trim() && !selectedImage)}>Analyze ➔</button>
+                      <button type="submit" className="btn btn-primary" disabled={isTyping || isRecording || (!userInput.trim() && !selectedImage)}>
+                        <span style={{ marginRight: '0.35rem' }}>Analyze</span>
+                        <Send size={14} strokeWidth={2.4} />
+                      </button>
                     </form>
                   </div>
                 </>
@@ -1111,11 +1163,11 @@ export default function AegisTriageApp() {
             <div className="card glass-card profile-card">
               <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="header-title-group">
-                  <span>📋</span>
+                  <span className="pulse-icon"><ClipboardList size={18} strokeWidth={2.2} /></span>
                   <h3>Structured Patient Profile (Live Data Model)</h3>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                  <button 
+                  <button
                     onClick={() => {
                       try {
                         localStorage.removeItem('aegis_patient_info');
@@ -1126,11 +1178,12 @@ export default function AegisTriageApp() {
                       setPatientInfo({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
                       setCheckInInput({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
                       triggerToast('Patient checked out successfully.');
-                    }} 
+                    }}
                     className="btn btn-secondary btn-sm"
                     style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem' }}
                   >
-                    🔄 Switch Patient
+                    <LogOut size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                    Switch Patient
                   </button>
                   <div className="profile-completion-meter" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-secondary)' }}>Intake Progress:</span>
@@ -1141,10 +1194,10 @@ export default function AegisTriageApp() {
                   </div>
                 </div>
               </div>
-              
+
               <div className="profile-dashboard-grid">
                 <div className="profile-dashboard-item patient-name">
-                  <div className="item-icon">👤</div>
+                  <div className="item-icon"><User size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Patient Name</span>
                     <p className="value">{patientInfo.name || 'Anonymous'}</p>
@@ -1152,7 +1205,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item patient-demographics">
-                  <div className="item-icon">🎂</div>
+                  <div className="item-icon"><Cake size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Age / Biological Sex</span>
                     <p className="value">{patientInfo.age ? `${patientInfo.age} yrs` : 'Unknown'} / {patientInfo.sex || 'Unknown'}</p>
@@ -1160,7 +1213,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item complaint">
-                  <div className="item-icon">🩺</div>
+                  <div className="item-icon"><Stethoscope size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Primary Complaint Summary</span>
                     <p className="value">{symptomProfile.primaryComplaint || 'No symptoms reported yet'}</p>
@@ -1168,7 +1221,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item duration">
-                  <div className="item-icon">⏱️</div>
+                  <div className="item-icon"><Clock size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Symptom Timeline / Duration</span>
                     <p className="value">{symptomProfile.duration || 'N/A'}</p>
@@ -1176,7 +1229,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item severity">
-                  <div className="item-icon">⚡</div>
+                  <div className="item-icon"><Zap size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Estimated Severity</span>
                     <p className="value">{symptomProfile.severity || 'N/A'}</p>
@@ -1184,7 +1237,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item history">
-                  <div className="item-icon">📜</div>
+                  <div className="item-icon"><ScrollText size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Relevant Medical History</span>
                     <p className="value">{symptomProfile.history || 'None declared'}</p>
@@ -1192,7 +1245,7 @@ export default function AegisTriageApp() {
                 </div>
 
                 <div className="profile-dashboard-item symptoms full-width">
-                  <div className="item-icon">➕</div>
+                  <div className="item-icon"><Tags size={20} strokeWidth={2} /></div>
                   <div className="item-text">
                     <span className="label">Tracked Associated Symptoms Map</span>
                     <div className="tags-container">
@@ -1227,12 +1280,22 @@ export default function AegisTriageApp() {
                   <p>{activeUrgencyGuide.description}</p>
                 </div>
 
-                <button 
-                  onClick={compileReport} 
-                  className="btn btn-primary btn-full-width" 
+                <button
+                  onClick={compileReport}
+                  className="btn btn-primary btn-full-width"
                   disabled={chatHistory.length < 2 || isCompilingSummary}
                 >
-                  {isCompilingSummary ? 'Compiling Report...' : 'Compile Clinician Report'}
+                  {isCompilingSummary ? (
+                    <>
+                      <span className="compiling-spinner"></span>
+                      Compiling Report...
+                    </>
+                  ) : (
+                    <>
+                      <FileText size={15} strokeWidth={2.4} style={{ marginRight: '0.5rem' }} />
+                      Compile Clinician Report
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -1241,13 +1304,19 @@ export default function AegisTriageApp() {
                 <div className="card glass-card handover-report-card">
                   <div className="card-header">
                     <div className="header-title-group">
-                      <span>📄</span>
+                      <span className="pulse-icon"><FileText size={18} strokeWidth={2.2} /></span>
                       <h3>Structured Handover Report</h3>
                     </div>
                     {summaryReport && (
                       <div className="report-actions" style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button className="btn btn-secondary btn-sm" onClick={copyHandoverText}>Copy Script</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => window.print()}>Print Report</button>
+                        <button className="btn btn-secondary btn-sm" onClick={copyHandoverText}>
+                          <Copy size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                          Copy Script
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => window.print()}>
+                          <Printer size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                          Print Report
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1336,19 +1405,19 @@ export default function AegisTriageApp() {
                       <div className="report-section">
                         <h3>3. Action Plan & Pathway Guidance</h3>
                         <div style={{ marginBottom: '1.25rem' }}>
-                          <h4 style={{ fontSize: '0.85rem', color: '#2d3748', marginBottom: '0.25rem', fontWeight: '700' }}>📋 Patient Guidance Plan:</h4>
+                          <h4 style={{ fontSize: '0.85rem', color: '#2d3748', marginBottom: '0.25rem', fontWeight: '700' }}>Patient Guidance Plan:</h4>
                           <p style={{ lineHeight: '1.6', fontSize: '0.85rem', color: '#4a5568' }}>{summaryReport.pathwayGuidance.whatToDo}</p>
                         </div>
 
                         <div style={{ marginBottom: '1.25rem' }}>
-                          <h4 style={{ fontSize: '0.85rem', color: '#2d3748', marginBottom: '0.25rem', fontWeight: '700' }}>🗣️ Patient Handover Script (Read to Clinician):</h4>
+                          <h4 style={{ fontSize: '0.85rem', color: '#2d3748', marginBottom: '0.25rem', fontWeight: '700' }}>Patient Handover Script (Read to Clinician):</h4>
                           <blockquote id="provider-handover-script" style={{ borderLeft: '3px solid #3182ce', padding: '0.6rem 0.85rem', background: '#ebf8ff', color: '#2b6cb0', fontStyle: 'italic', fontSize: '0.85rem', borderRadius: '0 8px 8px 0', lineHeight: '1.5', marginTop: '0.25rem' }}>
                             "{summaryReport.pathwayGuidance.whatToTellProvider}"
                           </blockquote>
                         </div>
 
                         <div>
-                          <h4 style={{ fontSize: '0.85rem', color: '#c53030', marginBottom: '0.25rem', fontWeight: '700' }}>🚨 Red Flag Warnings to Monitor:</h4>
+                          <h4 style={{ fontSize: '0.85rem', color: '#c53030', marginBottom: '0.25rem', fontWeight: '700' }}>Red Flag Warnings to Monitor:</h4>
                           <ul style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: '#c53030', lineHeight: '1.6' }}>
                             {summaryReport.pathwayGuidance.redFlags.map((rf, idx) => (
                               <li key={idx} style={{ marginBottom: '0.25rem' }}>{rf}</li>
@@ -1360,7 +1429,7 @@ export default function AegisTriageApp() {
                   ) : (
                     <div className="handover-report-placeholder">
                       <div className="placeholder-content">
-                        <span>🗂️</span>
+                        <FileText size={48} strokeWidth={1.2} style={{ marginBottom: '0.75rem', opacity: 0.5 }} />
                         <p>Clinical report has not been compiled yet.</p>
                         <small>Complete the symptoms intake dialogue, then click the Compile button on the left to review triage pathway reasoning.</small>
                       </div>
@@ -1377,7 +1446,7 @@ export default function AegisTriageApp() {
               <div className="card glass-card active-safety-card">
                 <div className="card-header">
                   <div className="header-title-group">
-                    <span>🛡️</span>
+                    <span className="pulse-icon"><Shield size={18} strokeWidth={2.2} /></span>
                     <h3>Hardcoded Safety Override Status</h3>
                   </div>
                 </div>
@@ -1385,7 +1454,13 @@ export default function AegisTriageApp() {
                   <div className={`guardrail-banner ${guardrailTriggered ? 'danger' : 'safe'}`}>
                     <div className="guardrail-pulse-indicator"></div>
                     <div className="guardrail-content">
-                      <h4>Clinical Auditing Engine</h4>
+                      <h4>
+                        {guardrailTriggered
+                          ? <AlertOctagon size={14} strokeWidth={2.4} style={{ marginRight: '0.4rem', verticalAlign: '-2px' }} />
+                          : <CheckCircle2 size={14} strokeWidth={2.4} style={{ marginRight: '0.4rem', verticalAlign: '-2px' }} />
+                        }
+                        Clinical Auditing Engine
+                      </h4>
                       <p>{guardrailTriggered ? `CRITICAL TRIGGER: ${guardrailReason}` : 'Active monitoring. No override indicators detected in user dialogue.'}</p>
                     </div>
                   </div>
@@ -1416,7 +1491,7 @@ export default function AegisTriageApp() {
               <div className="card glass-card audit-logs-card">
                 <div className="card-header">
                   <div className="header-title-group">
-                    <span>📜</span>
+                    <span className="pulse-icon"><ScrollText size={18} strokeWidth={2.2} /></span>
                     <h3>Safety Engine Real-Time Audit Logs</h3>
                   </div>
                 </div>
@@ -1449,12 +1524,12 @@ export default function AegisTriageApp() {
             <div className="card glass-card test-deck-card">
               <div className="card-header">
                 <div className="header-title-group">
-                  <span>🎛️</span>
+                  <span className="pulse-icon"><Sliders size={18} strokeWidth={2.2} /></span>
                   <h3>Differential Verification Console</h3>
                 </div>
                 <span className="badge badge-info">Evaluation Deck</span>
               </div>
-              
+
               <p className="section-description">Select from the structured symptom pairs below. The application will simulate the dialogue input, run checks through the safety override logic, evaluate clinical urgency via Vertex AI, and update the panels.</p>
 
               <div className="differential-tests-container">
@@ -1469,7 +1544,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Chest pain radiating to left arm</small>
                         <span className="expected-badge red">Expected: EMERGENCY NOW</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.cardiac)}>Simulate Cardiac Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.cardiac)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Cardiac Test
+                      </button>
                     </div>
                     <div className="test-item warning-group">
                       <div className="test-meta">
@@ -1477,7 +1555,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Sharp chest pain when coughing</small>
                         <span className="expected-badge yellow">Expected: GP Urgent / GP Routine</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.atypical_chest_pain)}>Simulate Atypical Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.atypical_chest_pain)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Atypical Test
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1493,7 +1574,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Instant onset, worst-ever pain</small>
                         <span className="expected-badge red">Expected: EMERGENCY NOW</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.thunderclap)}>Simulate Thunderclap Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.thunderclap)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Thunderclap Test
+                      </button>
                     </div>
                     <div className="test-item routine-group">
                       <div className="test-meta">
@@ -1501,7 +1585,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Mild gradual pain after work</small>
                         <span className="expected-badge blue">Expected: GP Routine / Self-Care</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.tension_headache)}>Simulate Tension Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.tension_headache)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Tension Test
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1517,7 +1604,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Sudden facial droop & slurred speech</small>
                         <span className="expected-badge red">Expected: EMERGENCY NOW</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.stroke)}>Simulate Stroke Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.stroke)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Stroke Test
+                      </button>
                     </div>
                     <div className="test-item green-group">
                       <div className="test-meta">
@@ -1525,7 +1615,10 @@ export default function AegisTriageApp() {
                         <small>Symptom: Runny nose, scratchy throat</small>
                         <span className="expected-badge green">Expected: Self-Care</span>
                       </div>
-                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.cold)}>Simulate Cold Test</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runTestSimulation(testCases.cold)}>
+                        <PlayCircle size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                        Simulate Cold Test
+                      </button>
                     </div>
                   </div>
                 </div>
