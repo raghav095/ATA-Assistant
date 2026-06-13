@@ -313,18 +313,6 @@ body {
   letter-spacing: -0.01em;
 }
 
-.header-sparkle {
-  color: var(--text-muted);
-  opacity: 0.6;
-  transition: all var(--transition-normal);
-}
-
-.header-title-container:hover .header-sparkle {
-  opacity: 1;
-  color: var(--color-accent);
-  transform: rotate(15deg) scale(1.1);
-}
-
 /* Progress Step Tracker */
 .progress-container {
   display: flex;
@@ -338,6 +326,18 @@ body {
   gap: 0.4rem;
   opacity: 0.35;
   transition: all var(--transition-spring);
+  background: transparent;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+
+.progress-step:hover {
+  opacity: 0.9;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .progress-step.active { opacity: 1; }
@@ -698,26 +698,53 @@ body {
 }
 
 .chat-input-area {
-  padding: 1.25rem;
+  padding: 1rem 1.25rem 1.25rem 1.25rem;
   border-top: 1px solid var(--border-color);
   background: rgba(9, 15, 27, 0.7);
 }
 
-.chat-input-area form { display: flex; gap: 0.75rem; }
+/* Priority 2: bento-style composer — outer container with rounded framing */
+.chat-input-area form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0.045) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 0.65rem;
+  transition: border-color var(--transition-fast), background var(--transition-normal);
+}
+
+.chat-input-area form:focus-within {
+  border-color: var(--border-hover);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.06) 100%);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chat-input-row.input-row { width: 100%; }
 
 .chat-input-area input {
   flex: 1;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid transparent;
   color: var(--text-primary);
-  padding: 0.85rem 1.25rem;
-  border-radius: 10px;
-  font-size: 0.9rem;
+  padding: 0.7rem 1rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
   outline: none;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-input-area input:focus { border-color: var(--color-accent); }
+.chat-input-area input:focus {
+  border-color: var(--border-hover);
+  background: rgba(0, 0, 0, 0.5);
+}
 
 /* Buttons */
 .btn {
@@ -912,6 +939,88 @@ body {
 .status-evaluation-card p {
   font-size: 0.85rem;
   color: var(--text-secondary);
+}
+
+/* Inline pathway guidance on tier card (Priority 1) */
+.pathway-inline-guidance {
+  width: 100%;
+  margin-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: left;
+}
+
+.pathway-inline-guidance .pathway-inline-section {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.015);
+  transition: all var(--transition-spring);
+}
+
+.pathway-inline-guidance .pathway-inline-section:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pathway-inline-guidance .do-section {
+  border-left: 3px solid var(--color-self-care);
+}
+
+.pathway-inline-guidance .redflag-section {
+  border-left: 3px solid var(--color-emergency);
+  background: rgba(255, 40, 40, 0.03);
+}
+
+.pathway-inline-guidance h4 {
+  font-family: var(--font-heading);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+}
+
+.pathway-inline-guidance .do-section h4 { color: var(--color-self-care); }
+.pathway-inline-guidance .redflag-section h4 { color: var(--color-emergency); }
+
+.pathway-inline-guidance p {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.pathway-inline-guidance ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.pathway-inline-guidance li {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  padding-left: 0.85rem;
+  position: relative;
+}
+
+.pathway-inline-guidance li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-emergency);
+  box-shadow: 0 0 4px var(--color-emergency-glow);
 }
 
 .handover-report-card {

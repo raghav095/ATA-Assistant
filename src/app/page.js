@@ -20,7 +20,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   Activity,
-  Sparkles,
   Volume2,
   Copy,
   Printer,
@@ -36,7 +35,8 @@ import {
   Check,
   AlertOctagon,
   FileText,
-  PlayCircle
+  PlayCircle,
+  ListChecks
 } from 'lucide-react';
 
 // Predefined Triage Guidelines
@@ -44,31 +44,43 @@ const urgencyGuidelines = {
   'Emergency Now': {
     title: 'Emergency: Seek Care Immediately',
     description: 'Based on the clinical indicators, you require immediate emergency medical attention. Call emergency services (e.g. 911 or 999) or proceed to the nearest Emergency Department immediately. Do not drive yourself.',
+    whatToDo: 'Call emergency services (911 / 999) immediately or ask someone nearby to. Do not drive yourself. Chew an aspirin if you are not allergic and a cardiac cause is suspected.',
+    redFlags: ['Loss of consciousness', 'Severe uncontrolled bleeding', 'Inability to breathe or speak', 'Sudden confusion or disorientation'],
     badgeClass: 'urgency-Emergency-Now'
   },
   'A&E Today': {
     title: 'Proceed to Accident & Emergency (A&E)',
     description: 'Your symptoms should be evaluated at an Accident & Emergency department today. Do not wait for a routine appointment.',
+    whatToDo: 'Go to your nearest Accident & Emergency department now. Do not eat or drink until seen if surgery is possible. Bring a list of current medications and a contact for your GP.',
+    redFlags: ['Sudden worsening of pain', 'Fainting or collapse', 'New neurological symptoms', 'Vomiting blood'],
     badgeClass: 'urgency-AE-Today'
   },
   'GP Urgent': {
     title: 'Urgent Same-Day GP Assessment',
     description: 'Please contact your General Practitioner (GP) or urgent care clinic for a same-day assessment.',
+    whatToDo: 'Contact your GP surgery\'s urgent care line now for a same-day appointment, or visit an urgent care center. If symptoms worsen before you are seen, escalate to A&E.',
+    redFlags: ['High fever that does not respond to medication', 'Breathing difficulty', 'New chest pain', 'Inability to keep fluids down'],
     badgeClass: 'urgency-GP-Urgent'
   },
   'GP Routine': {
     title: 'Routine GP Appointment',
     description: 'Please schedule a routine appointment with your GP in the coming days. Monitor your symptoms for any changes.',
+    whatToDo: 'Book a routine appointment with your GP in the next few days. Keep a symptom diary noting timing, severity, and triggers. Continue any prescribed medication.',
+    redFlags: ['Symptoms persisting beyond 2 weeks', 'Sudden worsening', 'New unexplained weight loss', 'Night sweats'],
     badgeClass: 'urgency-GP-Routine'
   },
   'Self-Care': {
     title: 'Self-Care & Home Monitoring',
     description: 'Your symptoms appear suitable for home care. Keep hydrated, rest, and monitor closely. Seek medical attention if symptoms worsen.',
+    whatToDo: 'Rest, stay hydrated, and monitor your symptoms for 24–48 hours. Use over-the-counter pain relief as directed on the packaging.',
+    redFlags: ['Symptoms persisting beyond 3 days', 'High fever above 39°C / 102°F', 'Symptoms spreading or worsening', 'New symptoms appearing'],
     badgeClass: 'urgency-Self-Care'
   },
   'Unspecified': {
     title: 'Awaiting Clinical Intake',
     description: 'Please describe your symptoms in the chat tab to begin. The AI assistant will collect details and classify the urgency tier.',
+    whatToDo: null,
+    redFlags: [],
     badgeClass: 'urgency-Unspecified'
   }
 };
@@ -141,6 +153,10 @@ export default function AegisTriageApp() {
   const audioChunksRef = useRef([]);
   const currentAudioRef = useRef(null);
   const recordingTimeoutRef = useRef(null);
+  // Bumped on every startVoiceSession. Async handlers (onstop, STT, TTS) capture
+  // the generation they were launched under and bail out if it has changed —
+  // prevents the "click exit, mic still flickers" race.
+  const sessionGenerationRef = useRef(0);
 
   // Real-time Voice Session State
   const [voiceSessionActive, setVoiceSessionActive] = useState(false);
@@ -248,6 +264,10 @@ export default function AegisTriageApp() {
   // Speaks text inside the interactive Voice Session call loop
   const speakTextSession = async (text, exitAfterSpeak = false) => {
     if (!text) return;
+    // Capture the session generation this TTS belongs to. If the user exits
+    // mid-playback, audio.onended and the catch below will see a different
+    // generation and skip the re-entry into recording.
+    const capturedGeneration = sessionGenerationRef.current;
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
@@ -259,12 +279,15 @@ export default function AegisTriageApp() {
         body: JSON.stringify({ text })
       });
       const data = await response.json();
+      // If the session was ended while we were waiting on TTS, do nothing.
+      if (capturedGeneration !== sessionGenerationRef.current) return;
       if (data.audioContent) {
         const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
         currentAudioRef.current = audio;
-        
+
         audio.onended = () => {
           currentAudioRef.current = null;
+          if (capturedGeneration !== sessionGenerationRef.current) return;
           if (exitAfterSpeak) {
             setVoiceSessionActive(false);
             setVoiceSessionStatus('idle');
@@ -288,6 +311,7 @@ export default function AegisTriageApp() {
       }
     } catch (err) {
       console.error('TTS Play Error:', err);
+      if (capturedGeneration !== sessionGenerationRef.current) return;
       if (exitAfterSpeak) {
         setVoiceSessionActive(false);
         setVoiceSessionStatus('idle');
@@ -299,6 +323,10 @@ export default function AegisTriageApp() {
   };
 
   const startRecording = async (isSession = false) => {
+    // Capture the session generation this recording belongs to. If the user exits
+    // the session while we're mid-recording, the onstop handler will see a
+    // different generation and bail out before re-entering anything.
+    const capturedGeneration = sessionGenerationRef.current;
     audioChunksRef.current = [];
     
     // Clear any active recording timers
@@ -335,6 +363,8 @@ export default function AegisTriageApp() {
       };
 
       mediaRecorder.onstop = async () => {
+        // Bail out if the session was ended (or restarted) while we were recording.
+        if (capturedGeneration !== sessionGenerationRef.current) return;
         // Resolve actual recording mimeType
         const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
@@ -343,8 +373,10 @@ export default function AegisTriageApp() {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
+          // Re-check after the async FileReader, in case the session ended during the read.
+          if (capturedGeneration !== sessionGenerationRef.current) return;
           const base64Audio = reader.result.split(',')[1];
-          
+
           if (isSession) {
             setVoiceSessionStatus('thinking');
           } else {
@@ -361,6 +393,9 @@ export default function AegisTriageApp() {
               })
             });
             const data = await response.json();
+
+            // Final staleness check after the STT round-trip.
+            if (capturedGeneration !== sessionGenerationRef.current) return;
 
             if (isSession) {
               if (data.text && data.text.trim()) {
@@ -382,6 +417,7 @@ export default function AegisTriageApp() {
             }
           } catch (err) {
             console.error('STT Error:', err);
+            if (capturedGeneration !== sessionGenerationRef.current) return;
             if (isSession) {
               setVoiceSessionStatus('listening');
               startRecording(true); // Retry
@@ -395,7 +431,7 @@ export default function AegisTriageApp() {
 
       mediaRecorder.start();
       setIsRecording(true);
-      
+
       if (isSession) {
         setVoiceSessionStatus('listening');
       } else {
@@ -404,6 +440,8 @@ export default function AegisTriageApp() {
 
       // Safety timeout: Auto-stop recording after 25 seconds of silence/speech
       recordingTimeoutRef.current = setTimeout(() => {
+        // Guard against firing after the session was ended.
+        if (capturedGeneration !== sessionGenerationRef.current) return;
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           stopRecording(isSession);
           triggerToast('⏱️ Max recording limit reached. Transcribing input...');
@@ -441,9 +479,12 @@ export default function AegisTriageApp() {
     if (isRecording) {
       stopRecording(false);
     }
+    // Bump the generation so any in-flight async handlers from the previous
+    // session become stale and bail out.
+    sessionGenerationRef.current += 1;
     setVoiceSessionActive(true);
     setVoiceSessionStatus('speaking');
-    
+
     // Read the greeting message to trigger the voice call
     const lastAssistantMsg = [...chatHistory].reverse().find(m => m.role === 'assistant');
     if (lastAssistantMsg) {
@@ -455,6 +496,12 @@ export default function AegisTriageApp() {
   };
 
   const endVoiceSession = () => {
+    // Invalidate any pending async work from this session.
+    sessionGenerationRef.current += 1;
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
@@ -905,33 +952,52 @@ export default function AegisTriageApp() {
               {activeTab === 'tab-guardrails' && "Safety Auditing Console"}
               {activeTab === 'tab-testing' && "Validation & Verification Deck"}
             </h1>
-            <Sparkles size={16} className="header-sparkle" strokeWidth={2.2} />
           </div>
 
           {/* Progress Tracker */}
           <div className="progress-container">
-            <div className={`progress-step ${activeProgressStep === 'intake' ? 'active' : 'completed'}`}>
+            <button
+              type="button"
+              className={`progress-step ${activeProgressStep === 'intake' ? 'active' : 'completed'}`}
+              onClick={() => switchTab('tab-chat')}
+              title="Go to Intake"
+            >
               <span className="step-num">1</span>
               <span className="step-label">Intake</span>
-            </div>
+            </button>
             <div className={`progress-line ${['clarifying', 'triage', 'summary'].includes(activeProgressStep) ? 'completed' : ''}`}></div>
-            
-            <div className={`progress-step ${activeProgressStep === 'clarifying' ? 'active' : ['triage', 'summary'].includes(activeProgressStep) ? 'completed' : ''}`}>
+
+            <button
+              type="button"
+              className={`progress-step ${activeProgressStep === 'clarifying' ? 'active' : ['triage', 'summary'].includes(activeProgressStep) ? 'completed' : ''}`}
+              onClick={() => switchTab('tab-chat')}
+              title="Go to Clarifying Questions"
+            >
               <span className="step-num">2</span>
               <span className="step-label">Clarifying</span>
-            </div>
+            </button>
             <div className={`progress-line ${['triage', 'summary'].includes(activeProgressStep) ? 'completed' : ''}`}></div>
-            
-            <div className={`progress-step ${activeProgressStep === 'triage' ? 'active' : activeProgressStep === 'summary' ? 'completed' : ''}`}>
+
+            <button
+              type="button"
+              className={`progress-step ${activeProgressStep === 'triage' ? 'active' : activeProgressStep === 'summary' ? 'completed' : ''}`}
+              onClick={() => switchTab('tab-pathway')}
+              title="Go to Triage Assessment"
+            >
               <span className="step-num">3</span>
               <span className="step-label">Triage</span>
-            </div>
+            </button>
             <div className={`progress-line ${activeProgressStep === 'summary' ? 'completed' : ''}`}></div>
-            
-            <div className={`progress-step ${activeProgressStep === 'summary' ? 'active' : ''}`}>
+
+            <button
+              type="button"
+              className={`progress-step ${activeProgressStep === 'summary' ? 'active' : ''}`}
+              onClick={() => switchTab('tab-pathway')}
+              title="Go to Handover Summary"
+            >
               <span className="step-num">4</span>
               <span className="step-label">Summary</span>
-            </div>
+            </button>
           </div>
         </header>
 
@@ -1096,61 +1162,67 @@ export default function AegisTriageApp() {
                       </div>
                     )}
                     <form onSubmit={(e) => { e.preventDefault(); sendMessage(userInput); }}>
-                      <button
-                        type="button"
-                        onClick={isRecording ? () => stopRecording(false) : () => startRecording(false)}
-                        className={`btn ${isRecording ? 'btn-danger-recording' : 'btn-secondary'}`}
-                        style={{ padding: '0.65rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '46px' }}
-                        disabled={isTyping}
-                        title={isRecording ? 'Stop Recording' : 'Record symptoms via voice'}
-                      >
-                        {isRecording ? <MicOff size={16} strokeWidth={2.4} /> : <Mic size={16} strokeWidth={2.4} />}
-                      </button>
-
-                      <label
-                        className="btn-upload-label"
-                        title="Upload clinical image (e.g. rash, cut, swelling)"
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '46px' }}
-                      >
-                        <ImageIcon size={16} strokeWidth={2.2} />
+                      <div className="chat-input-row input-row">
                         <input
-                          type="file"
-                          accept="image/*"
-                          style={{ display: 'none' }}
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onloadend = () => {
-                                const base64 = reader.result.split(',')[1];
-                                const fileSizeKb = (file.size / 1024).toFixed(1) + ' KB';
-                                setSelectedImage({
-                                  base64,
-                                  mimeType: file.type,
-                                  fileName: file.name,
-                                  fileSize: fileSizeKb
-                                });
-                                triggerToast('📷 Skin/triage image attached.');
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }}
+                          type="text"
+                          value={userInput}
+                          onChange={(e) => setUserInput(e.target.value)}
+                          placeholder={selectedImage ? "Add description or click Analyze..." : "Describe symptoms, severity, and duration..."}
+                          disabled={isTyping || isRecording}
+                          required={!selectedImage}
+                          autoComplete="off"
                         />
-                      </label>
+                      </div>
+                      <div className="chat-input-row action-row">
+                        <button
+                          type="button"
+                          onClick={isRecording ? () => stopRecording(false) : () => startRecording(false)}
+                          className={`btn ${isRecording ? 'btn-danger-recording' : 'btn-secondary'}`}
+                          style={{ padding: '0.55rem 0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '42px' }}
+                          disabled={isTyping}
+                          title={isRecording ? 'Stop Recording' : 'Record symptoms via voice'}
+                        >
+                          {isRecording ? <MicOff size={15} strokeWidth={2.4} /> : <Mic size={15} strokeWidth={2.4} />}
+                        </button>
 
-                      <input
-                        type="text"
-                        value={userInput}
-                        onChange={(e) => setUserInput(e.target.value)}
-                        placeholder={selectedImage ? "Add description or click Analyze..." : "Describe symptoms, severity, and duration..."}
-                        disabled={isTyping || isRecording}
-                        required={!selectedImage}
-                        autoComplete="off"
-                      />
-                      <button type="submit" className="btn btn-primary" disabled={isTyping || isRecording || (!userInput.trim() && !selectedImage)}>
-                        <span style={{ marginRight: '0.35rem' }}>Analyze</span>
-                        <Send size={14} strokeWidth={2.4} />
-                      </button>
+                        <label
+                          className="btn-upload-label"
+                          title="Upload clinical image (e.g. rash, cut, swelling)"
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '42px' }}
+                        >
+                          <ImageIcon size={15} strokeWidth={2.2} />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              const file = e.target.files[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  const base64 = reader.result.split(',')[1];
+                                  const fileSizeKb = (file.size / 1024).toFixed(1) + ' KB';
+                                  setSelectedImage({
+                                    base64,
+                                    mimeType: file.type,
+                                    fileName: file.name,
+                                    fileSize: fileSizeKb
+                                  });
+                                  triggerToast('📷 Skin/triage image attached.');
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                        </label>
+
+                        <div style={{ flex: 1 }} />
+
+                        <button type="submit" className="btn btn-primary" disabled={isTyping || isRecording || (!userInput.trim() && !selectedImage)}>
+                          <span style={{ marginRight: '0.35rem' }}>Analyze</span>
+                          <Send size={13} strokeWidth={2.4} />
+                        </button>
+                      </div>
                     </form>
                   </div>
                 </>
@@ -1278,6 +1350,25 @@ export default function AegisTriageApp() {
                   </div>
                   <h2>{activeUrgencyGuide.title}</h2>
                   <p>{activeUrgencyGuide.description}</p>
+
+                  {activeUrgencyGuide.whatToDo && (
+                    <div className="pathway-inline-guidance">
+                      <div className="pathway-inline-section do-section">
+                        <h4><ListChecks size={13} strokeWidth={2.4} style={{ marginRight: '0.4rem', verticalAlign: '-2px' }} />What to do now</h4>
+                        <p>{activeUrgencyGuide.whatToDo}</p>
+                      </div>
+                      {activeUrgencyGuide.redFlags && activeUrgencyGuide.redFlags.length > 0 && (
+                        <div className="pathway-inline-section redflag-section">
+                          <h4><AlertOctagon size={13} strokeWidth={2.4} style={{ marginRight: '0.4rem', verticalAlign: '-2px' }} />Red flag warnings</h4>
+                          <ul>
+                            {activeUrgencyGuide.redFlags.map((flag, idx) => (
+                              <li key={idx}>{flag}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <button
