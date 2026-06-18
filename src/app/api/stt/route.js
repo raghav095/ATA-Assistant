@@ -17,7 +17,7 @@ try {
 
 export async function POST(request) {
   try {
-    const { audioContent, mimeType, languageCode } = await request.json();
+    const { audioContent, mimeType, languageCode, isFirstTurn } = await request.json();
     if (!audioContent) {
       return NextResponse.json({ error: 'Audio content (base64) is required.' }, { status: 400 });
     }
@@ -30,8 +30,16 @@ export async function POST(request) {
     let gcpEncoding = 'WEBM_OPUS';
     let configPayload = {
       languageCode: languageCode || 'en-US',
-      alternativeLanguageCodes: ['hi-IN', 'en-IN'],
     };
+
+    // If it's the first turn, enable auto-detection between English and Hindi
+    // to allow the user to start speaking in either language.
+    // For subsequent turns, lock to the active conversation language context to avoid false switches.
+    if (isFirstTurn) {
+      configPayload.alternativeLanguageCodes = ['hi-IN', 'en-IN'];
+    } else if (languageCode && languageCode.startsWith('hi')) {
+      configPayload.alternativeLanguageCodes = ['en-IN', 'en-US'];
+    }
 
     const mime = (mimeType || '').toLowerCase();
     if (mime.includes('webm')) {

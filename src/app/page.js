@@ -36,7 +36,9 @@ import {
   AlertOctagon,
   FileText,
   PlayCircle,
-  ListChecks
+  ListChecks,
+  History,
+  Trash2
 } from 'lucide-react';
 
 // Predefined Triage Guidelines
@@ -147,6 +149,7 @@ export default function AegisTriageApp() {
   // Handover Report State
   const [summaryReport, setSummaryReport] = useState(null);
   const [isCompilingSummary, setIsCompilingSummary] = useState(false);
+  const [triageHistory, setTriageHistory] = useState([]);
 
   // Audio / Speech State
   const [voiceEnabled, setVoiceEnabled] = useState(false); // Off by default in standard chat
@@ -196,6 +199,16 @@ export default function AegisTriageApp() {
     } catch (e) {
       console.error('Failed to load patient info from localStorage', e);
     }
+
+    // Load triage history from localStorage on mount
+    try {
+      const storedHistory = localStorage.getItem('aegis_triage_history');
+      if (storedHistory) {
+        setTriageHistory(JSON.parse(storedHistory));
+      }
+    } catch (e) {
+      console.error('Failed to load triage history from localStorage', e);
+    }
   }, []);
 
   // Toast Trigger Helper
@@ -217,6 +230,29 @@ export default function AegisTriageApp() {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
+    }
+    // Clean up active recording or streams
+    sessionGenerationRef.current += 1;
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+    if (useLocalSTT && recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
+    }
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+        if (mediaRecorderRef.current.stream) {
+          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+      } catch (e) {
+        console.error('Failed to clean up mediaRecorder tracks:', e);
+      }
     }
     setChatHistory([
       { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
@@ -241,6 +277,57 @@ export default function AegisTriageApp() {
     setVoiceSessionStatus('idle');
     setIsTyping(false);
     triggerToast('Dialogue intake reset successfully.');
+  };
+
+  // Load triage assessment from history
+  const loadHistoryItem = (item) => {
+    if (item.patientInfo) {
+      setPatientInfo(item.patientInfo);
+      setCheckInInput(item.patientInfo);
+      setIsCheckedIn(true);
+    }
+    if (item.chatHistory) setChatHistory(item.chatHistory);
+    if (item.symptomProfile) setSymptomProfile(item.symptomProfile);
+    if (item.urgency) setCurrentUrgency(item.urgency);
+    if (item.isOverride !== undefined) {
+      setGuardrailTriggered(item.isOverride);
+      setGuardrailReason(item.overrideReason || '');
+      setGuardrailMessage(item.overrideMessage || '');
+    }
+    if (item.report) {
+      setSummaryReport(item.report);
+    } else {
+      setSummaryReport(null);
+    }
+    switchTab('tab-pathway');
+    triggerToast('📋 Loaded selected triage report.');
+  };
+
+  // Delete specific history item
+  const deleteHistoryItem = (id) => {
+    setTriageHistory(prev => {
+      const updated = prev.filter(item => item.id !== id);
+      try {
+        localStorage.setItem('aegis_triage_history', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to update triage history in localStorage', e);
+      }
+      return updated;
+    });
+    triggerToast('🗑️ Report deleted from history.');
+  };
+
+  // Clear all history
+  const clearAllHistory = () => {
+    if (window.confirm('Are you sure you want to clear all past triage reports? This action cannot be undone.')) {
+      setTriageHistory([]);
+      try {
+        localStorage.removeItem('aegis_triage_history');
+      } catch (e) {
+        console.error('Failed to remove triage history from localStorage', e);
+      }
+      triggerToast('🗑️ Triage history cleared.');
+    }
   };
 
   // Browser Speech Synthesis Fallback helper
@@ -486,10 +573,10 @@ export default function AegisTriageApp() {
       };
 
       mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
         if (capturedGeneration !== sessionGenerationRef.current) return;
         const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
-        stream.getTracks().forEach(track => track.stop());
 
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
@@ -625,12 +712,19 @@ export default function AegisTriageApp() {
         recognitionRef.current.abort();
       } catch (e) {}
     }
-    if (isRecording) {
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+        if (mediaRecorderRef.current.stream) {
+          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+      } catch (e) {
+        console.error('Failed to clean up mediaRecorder tracks:', e);
       }
-      setIsRecording(false);
     }
+    setIsRecording(false);
     setVoiceSessionActive(false);
     setVoiceSessionStatus('idle');
     triggerToast('Voice session ended. Switched to text chat.');
@@ -679,6 +773,55 @@ export default function AegisTriageApp() {
         setGuardrailReason(data.guardrailReason || '');
         setGuardrailMessage(data.message || '');
         setChatHistory(prev => [...prev, { role: 'assistant', content: data.message }]);
+
+        // Save safety override to history
+        const newHistoryItem = {
+          id: Date.now().toString(),
+          timestamp: new Date().toISOString(),
+          patientName: patientInfo.name || 'Anonymous',
+          patientInfo: { ...patientInfo },
+          primaryComplaint: symptomProfile.primaryComplaint || text || 'Acute Trigger',
+          severity: 'Severe',
+          urgency: 'Emergency Now',
+          isOverride: true,
+          overrideReason: data.guardrailReason || 'Safety Trigger',
+          overrideMessage: data.message,
+          report: {
+            urgency: 'Emergency Now',
+            summary: {
+              presentingComplaint: symptomProfile.primaryComplaint || text || 'Safety Override Trigger',
+              symptomTimeline: symptomProfile.duration || 'N/A',
+              associatedSymptoms: symptomProfile.associatedSymptoms?.length > 0 ? symptomProfile.associatedSymptoms : ["Emergency indicators present"],
+              medicalHistory: patientInfo.preExistingHistory || 'None declared',
+              clinicalUrgencyAssessment: `SAFETY OVERRIDE CRITICAL TRIGGER: ${data.guardrailReason}`
+            },
+            reasoning: `The safety guardrails triggered an automatic override due to critical symptoms: ${data.guardrailReason}. Prompt intervention is required.`,
+            pathwayGuidance: {
+              whatToDo: data.message,
+              whatToTellProvider: `This patient triggered a safety override for ${data.guardrailReason || 'emergency symptoms'}. Immediate clinical assessment is recommended.`,
+              redFlags: ['Emergency services should be contacted immediately if symptoms worsen.']
+            }
+          },
+          chatHistory: [...updatedHistory, { role: 'assistant', content: data.message }],
+          symptomProfile: { 
+            primaryComplaint: symptomProfile.primaryComplaint || text || 'Acute Trigger',
+            duration: symptomProfile.duration || 'N/A',
+            severity: 'Severe',
+            associatedSymptoms: symptomProfile.associatedSymptoms?.length > 0 ? symptomProfile.associatedSymptoms : ["Emergency indicators present"],
+            history: patientInfo.preExistingHistory || 'None declared'
+          }
+        };
+
+        setTriageHistory(prev => {
+          const updated = [newHistoryItem, ...prev];
+          try {
+            localStorage.setItem('aegis_triage_history', JSON.stringify(updated));
+          } catch (e) {
+            console.error('Failed to save triage history to localStorage', e);
+          }
+          return updated;
+        });
+
         setVoiceSessionStatus('speaking');
         await speakTextSession(replyText, true);
       } else {
@@ -1002,7 +1145,55 @@ export default function AegisTriageApp() {
         setGuardrailMessage(data.message || '');
         setChatHistory(prev => [...prev, { role: 'assistant', content: data.message }]);
         triggerToast("🚨 Safety override triggered! Auto-routing to Triage...");
-        
+
+        // Save safety override to history
+        const newHistoryItem = {
+          id: Date.now().toString(),
+          timestamp: new Date().toISOString(),
+          patientName: patientInfo.name || 'Anonymous',
+          patientInfo: { ...patientInfo },
+          primaryComplaint: symptomProfile.primaryComplaint || text || 'Acute Trigger',
+          severity: 'Severe',
+          urgency: 'Emergency Now',
+          isOverride: true,
+          overrideReason: data.guardrailReason || 'Safety Trigger',
+          overrideMessage: data.message,
+          report: {
+            urgency: 'Emergency Now',
+            summary: {
+              presentingComplaint: symptomProfile.primaryComplaint || text || 'Safety Override Trigger',
+              symptomTimeline: symptomProfile.duration || 'N/A',
+              associatedSymptoms: symptomProfile.associatedSymptoms?.length > 0 ? symptomProfile.associatedSymptoms : ["Emergency indicators present"],
+              medicalHistory: patientInfo.preExistingHistory || 'None declared',
+              clinicalUrgencyAssessment: `SAFETY OVERRIDE CRITICAL TRIGGER: ${data.guardrailReason}`
+            },
+            reasoning: `The safety guardrails triggered an automatic override due to critical symptoms: ${data.guardrailReason}. Prompt intervention is required.`,
+            pathwayGuidance: {
+              whatToDo: data.message,
+              whatToTellProvider: `This patient triggered a safety override for ${data.guardrailReason || 'emergency symptoms'}. Immediate clinical assessment is recommended.`,
+              redFlags: ['Emergency services should be contacted immediately if symptoms worsen.']
+            }
+          },
+          chatHistory: [...updatedHistory, { role: 'assistant', content: data.message }],
+          symptomProfile: { 
+            primaryComplaint: symptomProfile.primaryComplaint || text || 'Acute Trigger',
+            duration: symptomProfile.duration || 'N/A',
+            severity: 'Severe',
+            associatedSymptoms: symptomProfile.associatedSymptoms?.length > 0 ? symptomProfile.associatedSymptoms : ["Emergency indicators present"],
+            history: patientInfo.preExistingHistory || 'None declared'
+          }
+        };
+
+        setTriageHistory(prev => {
+          const updated = [newHistoryItem, ...prev];
+          try {
+            localStorage.setItem('aegis_triage_history', JSON.stringify(updated));
+          } catch (e) {
+            console.error('Failed to save triage history to localStorage', e);
+          }
+          return updated;
+        });
+
         if (voiceEnabled) {
           speakText(data.message);
         }
@@ -1077,6 +1268,31 @@ export default function AegisTriageApp() {
 
       setSummaryReport(data);
       triggerToast('✅ Clinician Handover Report compiled.');
+
+      // Save to history log
+      const newHistoryItem = {
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        patientName: patientInfo.name || 'Anonymous',
+        patientInfo: { ...patientInfo },
+        primaryComplaint: symptomProfile.primaryComplaint || 'No symptoms reported',
+        severity: symptomProfile.severity || 'N/A',
+        urgency: data.urgency || currentUrgency,
+        isOverride: false,
+        report: data,
+        chatHistory: [...chatHistory],
+        symptomProfile: { ...symptomProfile }
+      };
+
+      setTriageHistory(prev => {
+        const updated = [newHistoryItem, ...prev];
+        try {
+          localStorage.setItem('aegis_triage_history', JSON.stringify(updated));
+        } catch (e) {
+          console.error('Failed to save triage history to localStorage', e);
+        }
+        return updated;
+      });
 
     } catch (err) {
       console.error(err);
@@ -1622,104 +1838,213 @@ export default function AegisTriageApp() {
 
           {/* Tab 2: Structured Patient Profile */}
           {activeTab === 'tab-profile' && (
-            <div className="card glass-card profile-card">
-              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="header-title-group">
-                  <span className="pulse-icon"><ClipboardList size={18} strokeWidth={2.2} /></span>
-                  <h3>Structured Patient Profile (Live Data Model)</h3>
-                </div>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                  <button
-                    onClick={() => {
-                      try {
-                        localStorage.removeItem('aegis_patient_info');
-                      } catch (err) {
-                        console.error(err);
-                      }
-                      setIsCheckedIn(false);
-                      setPatientInfo({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
-                      setCheckInInput({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
-                      triggerToast('Patient checked out successfully.');
-                    }}
-                    className="btn btn-secondary btn-sm"
-                    style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem' }}
-                  >
-                    <LogOut size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
-                    Switch Patient
-                  </button>
-                  <div className="profile-completion-meter" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-secondary)' }}>Intake Progress:</span>
-                    <div className="progress-bar-bg" style={{ width: '100px', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div className="progress-bar-fill" style={{ width: `${profileCompletion}%`, height: '100%', background: 'var(--color-self-care)', transition: 'width 0.4s ease' }}></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div className="card glass-card profile-card">
+                <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="header-title-group">
+                    <span className="pulse-icon"><ClipboardList size={18} strokeWidth={2.2} /></span>
+                    <h3>Structured Patient Profile (Live Data Model)</h3>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <button
+                      onClick={() => {
+                        try {
+                          localStorage.removeItem('aegis_patient_info');
+                        } catch (err) {
+                          console.error(err);
+                        }
+                        setIsCheckedIn(false);
+                        setPatientInfo({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
+                        setCheckInInput({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
+                        triggerToast('Patient checked out successfully.');
+                      }}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem' }}
+                    >
+                      <LogOut size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                      Switch Patient
+                    </button>
+                    <div className="profile-completion-meter" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-secondary)' }}>Intake Progress:</span>
+                      <div className="progress-bar-bg" style={{ width: '100px', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div className="progress-bar-fill" style={{ width: `${profileCompletion}%`, height: '100%', background: 'var(--color-self-care)', transition: 'width 0.4s ease' }}></div>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--color-self-care)' }}>{profileCompletion}%</span>
                     </div>
-                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--color-self-care)' }}>{profileCompletion}%</span>
+                  </div>
+                </div>
+
+                <div className="profile-dashboard-grid">
+                  <div className="profile-dashboard-item patient-name">
+                    <div className="item-icon"><User size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Patient Name</span>
+                      <p className="value">{patientInfo.name || 'Anonymous'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item patient-demographics">
+                    <div className="item-icon"><Cake size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Age / Biological Sex</span>
+                      <p className="value">{patientInfo.age ? `${patientInfo.age} yrs` : 'Unknown'} / {patientInfo.sex || 'Unknown'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item complaint">
+                    <div className="item-icon"><Stethoscope size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Primary Complaint Summary</span>
+                      <p className="value">{symptomProfile.primaryComplaint || 'No symptoms reported yet'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item duration">
+                    <div className="item-icon"><Clock size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Symptom Timeline / Duration</span>
+                      <p className="value">{symptomProfile.duration || 'N/A'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item severity">
+                    <div className="item-icon"><Zap size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Estimated Severity</span>
+                      <p className="value">{symptomProfile.severity || 'N/A'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item history">
+                    <div className="item-icon"><ScrollText size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Relevant Medical History</span>
+                      <p className="value">{symptomProfile.history || 'None declared'}</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-dashboard-item symptoms full-width">
+                    <div className="item-icon"><Tags size={20} strokeWidth={2} /></div>
+                    <div className="item-text">
+                      <span className="label">Tracked Associated Symptoms Map</span>
+                      <div className="tags-container">
+                        {symptomProfile.associatedSymptoms?.length > 0 ? (
+                          symptomProfile.associatedSymptoms.map((sym, index) => (
+                            <span key={index} className="tag">{sym}</span>
+                          ))
+                        ) : (
+                          <span className="no-tags">No secondary symptoms reported.</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="profile-dashboard-grid">
-                <div className="profile-dashboard-item patient-name">
-                  <div className="item-icon"><User size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Patient Name</span>
-                    <p className="value">{patientInfo.name || 'Anonymous'}</p>
+              {/* Triage & Assessment History Card */}
+              <div className="card glass-card history-card" style={{ animationDelay: '0.1s' }}>
+                <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="header-title-group">
+                    <span className="pulse-icon"><History size={18} strokeWidth={2.2} /></span>
+                    <h3>Triage & Assessment History Log</h3>
                   </div>
+                  {triageHistory.length > 0 && (
+                    <button
+                      onClick={clearAllHistory}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', color: '#fc8181', borderColor: 'rgba(252, 129, 129, 0.2)' }}
+                    >
+                      <Trash2 size={13} strokeWidth={2.4} style={{ marginRight: '0.35rem' }} />
+                      Clear History
+                    </button>
+                  )}
                 </div>
 
-                <div className="profile-dashboard-item patient-demographics">
-                  <div className="item-icon"><Cake size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Age / Biological Sex</span>
-                    <p className="value">{patientInfo.age ? `${patientInfo.age} yrs` : 'Unknown'} / {patientInfo.sex || 'Unknown'}</p>
-                  </div>
-                </div>
-
-                <div className="profile-dashboard-item complaint">
-                  <div className="item-icon"><Stethoscope size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Primary Complaint Summary</span>
-                    <p className="value">{symptomProfile.primaryComplaint || 'No symptoms reported yet'}</p>
-                  </div>
-                </div>
-
-                <div className="profile-dashboard-item duration">
-                  <div className="item-icon"><Clock size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Symptom Timeline / Duration</span>
-                    <p className="value">{symptomProfile.duration || 'N/A'}</p>
-                  </div>
-                </div>
-
-                <div className="profile-dashboard-item severity">
-                  <div className="item-icon"><Zap size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Estimated Severity</span>
-                    <p className="value">{symptomProfile.severity || 'N/A'}</p>
-                  </div>
-                </div>
-
-                <div className="profile-dashboard-item history">
-                  <div className="item-icon"><ScrollText size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Relevant Medical History</span>
-                    <p className="value">{symptomProfile.history || 'None declared'}</p>
-                  </div>
-                </div>
-
-                <div className="profile-dashboard-item symptoms full-width">
-                  <div className="item-icon"><Tags size={20} strokeWidth={2} /></div>
-                  <div className="item-text">
-                    <span className="label">Tracked Associated Symptoms Map</span>
-                    <div className="tags-container">
-                      {symptomProfile.associatedSymptoms?.length > 0 ? (
-                        symptomProfile.associatedSymptoms.map((sym, index) => (
-                          <span key={index} className="tag">{sym}</span>
-                        ))
-                      ) : (
-                        <span className="no-tags">No secondary symptoms reported.</span>
-                      )}
+                <div className="history-content-body" style={{ padding: '1.25rem' }}>
+                  {triageHistory.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary)' }}>
+                      <History size={40} strokeWidth={1.2} style={{ marginBottom: '0.75rem', opacity: 0.5 }} />
+                      <p style={{ fontSize: '0.9rem', margin: '0 0 0.25rem 0' }}>No past triage sessions recorded yet.</p>
+                      <small style={{ display: 'block', opacity: 0.7 }}>
+                        Completed clinician reports and safety overrides will be stored here automatically.
+                      </small>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="history-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {triageHistory.map((item) => {
+                        let itemUrgency = item.urgency || 'Unspecified';
+                        if (itemUrgency.toLowerCase().includes('emergency')) itemUrgency = 'Emergency Now';
+                        const guide = urgencyGuidelines[itemUrgency] || urgencyGuidelines['Unspecified'];
+
+                        return (
+                          <div 
+                            key={item.id}
+                            className="history-item"
+                            style={{ 
+                              background: 'rgba(255, 255, 255, 0.02)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '12px',
+                              padding: '1rem',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              transition: 'all 0.2s ease',
+                              gap: '1rem'
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
+                                <span className={`badge ${guide.badgeClass}`} style={{ fontSize: '0.7rem', fontWeight: '800' }}>
+                                  {itemUrgency.toUpperCase()}
+                                </span>
+                                {item.isOverride && (
+                                  <span className="badge urgency-Emergency-Now" style={{ fontSize: '0.7rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#e53e3e', color: '#fff' }}>
+                                    <AlertOctagon size={10} strokeWidth={3} /> SAFETY OVERRIDE
+                                  </span>
+                                )}
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                                  {new Date(item.timestamp).toLocaleString()}
+                                </span>
+                              </div>
+                              <h4 style={{ fontSize: '0.9rem', fontWeight: '700', marginBottom: '0.2rem', color: 'var(--text-primary)' }}>
+                                {item.patientName} ({item.patientInfo?.age ? `${item.patientInfo.age} yrs` : 'Unknown'} / {item.patientInfo?.sex || 'Unknown'})
+                              </h4>
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                <strong>Complaint:</strong> {item.primaryComplaint}
+                              </p>
+                              {item.isOverride && item.overrideReason && (
+                                <p style={{ fontSize: '0.75rem', color: '#fc8181', margin: '0.25rem 0 0 0', fontWeight: '600' }}>
+                                  ⚠️ Trigger: {item.overrideReason}
+                                </p>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                              <button 
+                                onClick={() => loadHistoryItem(item)}
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                              >
+                                <FileText size={13} strokeWidth={2.4} />
+                                View Report
+                              </button>
+                              <button 
+                                onClick={() => deleteHistoryItem(item.id)}
+                                className="btn btn-outline btn-sm"
+                                style={{ 
+                                  padding: '0.4rem 0.5rem', 
+                                  borderColor: 'transparent',
+                                  color: 'var(--text-secondary)'
+                                }}
+                                title="Delete from history"
+                              >
+                                <Trash2 size={13} strokeWidth={2.4} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
