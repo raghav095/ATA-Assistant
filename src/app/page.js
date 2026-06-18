@@ -161,6 +161,8 @@ export default function AegisTriageApp() {
   // Real-time Voice Session State
   const [voiceSessionActive, setVoiceSessionActive] = useState(false);
   const [voiceSessionStatus, setVoiceSessionStatus] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking'
+  const [useLocalSTT, setUseLocalSTT] = useState(false);
+  const recognitionRef = useRef(null);
 
   // Chat scroll anchor ref
   const chatBottomRef = useRef(null);
@@ -237,6 +239,111 @@ export default function AegisTriageApp() {
     triggerToast('Dialogue intake reset successfully.');
   };
 
+  // Browser Speech Synthesis Fallback helper
+  const speakTextBrowser = (text, onEndCallback) => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
+      
+      const voices = window.speechSynthesis.getVoices();
+      const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) || 
+                      voices.find(v => v.lang.startsWith('en')) || 
+                      voices[0];
+      if (enVoice) utterance.voice = enVoice;
+      
+      if (onEndCallback) {
+        utterance.onend = onEndCallback;
+        utterance.onerror = onEndCallback;
+      }
+      
+      window.speechSynthesis.speak(utterance);
+      currentAudioRef.current = {
+        pause: () => window.speechSynthesis.cancel()
+      };
+    } else {
+      if (onEndCallback) onEndCallback();
+    }
+  };
+
+  // Browser Speech Recognition Fallback helper
+  const startBrowserRecognition = (isSession, capturedGeneration) => {
+    const SpeechRecognition = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+    if (!SpeechRecognition) {
+      triggerToast('⚠️ Speech recognition not supported in this browser.');
+      if (isSession) {
+        setVoiceSessionActive(false);
+        setVoiceSessionStatus('idle');
+      }
+      return;
+    }
+
+    if (currentAudioRef.current && currentAudioRef.current.pause) {
+      currentAudioRef.current.pause();
+    }
+
+    // Cancel any active recognition first
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+      if (isSession) {
+        setVoiceSessionStatus('listening');
+      } else {
+        triggerToast('🎙️ Browser dictation active. Speak now...');
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.error('Browser Speech Recognition error:', e);
+      if (capturedGeneration !== sessionGenerationRef.current) return;
+      setIsRecording(false);
+      if (e.error === 'no-speech') {
+        triggerToast('⚠️ No speech detected.');
+      } else {
+        triggerToast('⚠️ Speech recognition error.');
+      }
+      if (isSession) {
+        setVoiceSessionStatus('listening');
+        startRecording(true); // resume listening automatically
+      }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognition.onresult = async (event) => {
+      if (capturedGeneration !== sessionGenerationRef.current) return;
+      const transcript = event.results[0][0].transcript;
+      if (isSession) {
+        if (transcript && transcript.trim()) {
+          await sendVoiceSessionMessage(transcript);
+        } else {
+          setVoiceSessionStatus('listening');
+          triggerToast('⚠️ Speech not recognized. Try again.');
+          startRecording(true);
+        }
+      } else {
+        setUserInput(transcript);
+        triggerToast('🎙️ Speech loaded. Click Send to submit.');
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
   // GCP Speech Synthesize & Transcribe Handlers
   const speakText = async (text) => {
     if (!text) return;
@@ -251,27 +358,43 @@ export default function AegisTriageApp() {
         body: JSON.stringify({ text })
       });
       const data = await response.json();
-      if (data.audioContent) {
+      if (data.audioContent && !data.useBrowserFallback) {
         const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
         currentAudioRef.current = audio;
         audio.play();
+      } else {
+        speakTextBrowser(text);
       }
     } catch (err) {
-      console.error('GCP TTS Error:', err);
+      console.error('GCP TTS Error, using browser fallback:', err);
+      speakTextBrowser(text);
     }
   };
 
   // Speaks text inside the interactive Voice Session call loop
   const speakTextSession = async (text, exitAfterSpeak = false) => {
     if (!text) return;
-    // Capture the session generation this TTS belongs to. If the user exits
-    // mid-playback, audio.onended and the catch below will see a different
-    // generation and skip the re-entry into recording.
     const capturedGeneration = sessionGenerationRef.current;
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
+
+    const runLocalTTS = () => {
+      speakTextBrowser(text, () => {
+        if (capturedGeneration !== sessionGenerationRef.current) return;
+        currentAudioRef.current = null;
+        if (exitAfterSpeak) {
+          setVoiceSessionActive(false);
+          setVoiceSessionStatus('idle');
+          switchTab('tab-pathway');
+          triggerToast('🚨 Urgency determined. Reviewing care pathway...');
+        } else {
+          startRecording(true);
+        }
+      });
+    };
+
     try {
       const response = await fetch('/api/tts', {
         method: 'POST',
@@ -279,9 +402,8 @@ export default function AegisTriageApp() {
         body: JSON.stringify({ text })
       });
       const data = await response.json();
-      // If the session was ended while we were waiting on TTS, do nothing.
       if (capturedGeneration !== sessionGenerationRef.current) return;
-      if (data.audioContent) {
+      if (data.audioContent && !data.useBrowserFallback) {
         const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
         currentAudioRef.current = audio;
 
@@ -294,42 +416,30 @@ export default function AegisTriageApp() {
             switchTab('tab-pathway');
             triggerToast('🚨 Urgency determined. Reviewing care pathway...');
           } else {
-            // Hands-free loop: resume recording user input automatically
             startRecording(true);
           }
         };
 
         audio.play();
       } else {
-        if (exitAfterSpeak) {
-          setVoiceSessionActive(false);
-          setVoiceSessionStatus('idle');
-          switchTab('tab-pathway');
-        } else {
-          startRecording(true);
-        }
+        runLocalTTS();
       }
     } catch (err) {
-      console.error('TTS Play Error:', err);
+      console.error('TTS Play Error, using browser fallback:', err);
       if (capturedGeneration !== sessionGenerationRef.current) return;
-      if (exitAfterSpeak) {
-        setVoiceSessionActive(false);
-        setVoiceSessionStatus('idle');
-        switchTab('tab-pathway');
-      } else {
-        startRecording(true);
-      }
+      runLocalTTS();
     }
   };
 
   const startRecording = async (isSession = false) => {
-    // Capture the session generation this recording belongs to. If the user exits
-    // the session while we're mid-recording, the onstop handler will see a
-    // different generation and bail out before re-entering anything.
     const capturedGeneration = sessionGenerationRef.current;
+
+    if (useLocalSTT) {
+      startBrowserRecognition(isSession, capturedGeneration);
+      return;
+    }
+
     audioChunksRef.current = [];
-    
-    // Clear any active recording timers
     if (recordingTimeoutRef.current) {
       clearTimeout(recordingTimeoutRef.current);
       recordingTimeoutRef.current = null;
@@ -363,9 +473,7 @@ export default function AegisTriageApp() {
       };
 
       mediaRecorder.onstop = async () => {
-        // Bail out if the session was ended (or restarted) while we were recording.
         if (capturedGeneration !== sessionGenerationRef.current) return;
-        // Resolve actual recording mimeType
         const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
         stream.getTracks().forEach(track => track.stop());
@@ -373,7 +481,6 @@ export default function AegisTriageApp() {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
-          // Re-check after the async FileReader, in case the session ended during the read.
           if (capturedGeneration !== sessionGenerationRef.current) return;
           const base64Audio = reader.result.split(',')[1];
 
@@ -393,9 +500,13 @@ export default function AegisTriageApp() {
               })
             });
             const data = await response.json();
-
-            // Final staleness check after the STT round-trip.
             if (capturedGeneration !== sessionGenerationRef.current) return;
+
+            if (data.useBrowserFallback) {
+              setUseLocalSTT(true);
+              startBrowserRecognition(isSession, capturedGeneration);
+              return;
+            }
 
             if (isSession) {
               if (data.text && data.text.trim()) {
@@ -403,7 +514,6 @@ export default function AegisTriageApp() {
               } else {
                 setVoiceSessionStatus('listening');
                 triggerToast('⚠️ Speech not recognized. Try speaking again.');
-                // Re-listen automatically to prevent deadlocks
                 startRecording(true);
               }
             } else {
@@ -416,15 +526,10 @@ export default function AegisTriageApp() {
               }
             }
           } catch (err) {
-            console.error('STT Error:', err);
+            console.error('STT Error, falling back to browser recognition:', err);
             if (capturedGeneration !== sessionGenerationRef.current) return;
-            if (isSession) {
-              setVoiceSessionStatus('listening');
-              startRecording(true); // Retry
-            } else {
-              setIsTyping(false);
-            }
-            triggerToast('⚠️ Speech transcription failed.');
+            setUseLocalSTT(true);
+            startBrowserRecognition(isSession, capturedGeneration);
           }
         };
       };
@@ -438,9 +543,7 @@ export default function AegisTriageApp() {
         triggerToast('🎙️ Dictation active. Speak now...');
       }
 
-      // Safety timeout: Auto-stop recording after 25 seconds of silence/speech
       recordingTimeoutRef.current = setTimeout(() => {
-        // Guard against firing after the session was ended.
         if (capturedGeneration !== sessionGenerationRef.current) return;
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           stopRecording(isSession);
@@ -449,20 +552,21 @@ export default function AegisTriageApp() {
       }, 25000);
 
     } catch (err) {
-      console.error('Mic Access Error:', err);
-      triggerToast('⚠️ Microphone access denied.');
-      if (isSession) {
-        setVoiceSessionActive(false);
-        setVoiceSessionStatus('idle');
-      }
+      console.error('Mic Access Error, trying browser fallback:', err);
+      setUseLocalSTT(true);
+      startBrowserRecognition(isSession, capturedGeneration);
     }
   };
 
   const stopRecording = (isSession = false) => {
-    // Clear safety timeout
     if (recordingTimeoutRef.current) {
       clearTimeout(recordingTimeoutRef.current);
       recordingTimeoutRef.current = null;
+    }
+    if (useLocalSTT && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsRecording(false);
+      return;
     }
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -479,13 +583,10 @@ export default function AegisTriageApp() {
     if (isRecording) {
       stopRecording(false);
     }
-    // Bump the generation so any in-flight async handlers from the previous
-    // session become stale and bail out.
     sessionGenerationRef.current += 1;
     setVoiceSessionActive(true);
     setVoiceSessionStatus('speaking');
 
-    // Read the greeting message to trigger the voice call
     const lastAssistantMsg = [...chatHistory].reverse().find(m => m.role === 'assistant');
     if (lastAssistantMsg) {
       speakTextSession(lastAssistantMsg.content, false);
@@ -496,7 +597,6 @@ export default function AegisTriageApp() {
   };
 
   const endVoiceSession = () => {
-    // Invalidate any pending async work from this session.
     sessionGenerationRef.current += 1;
     if (recordingTimeoutRef.current) {
       clearTimeout(recordingTimeoutRef.current);
@@ -505,6 +605,11 @@ export default function AegisTriageApp() {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
+    }
+    if (useLocalSTT && recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
     }
     if (isRecording) {
       if (mediaRecorderRef.current) {

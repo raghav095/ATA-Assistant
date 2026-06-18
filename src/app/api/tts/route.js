@@ -23,7 +23,7 @@ export async function POST(request) {
     }
 
     if (!ttsClient) {
-      return NextResponse.json({ error: 'TTS Client not initialized.' }, { status: 500 });
+      return NextResponse.json({ error: 'TTS Client not initialized.', useBrowserFallback: true }, { status: 500 });
     }
 
     const ttsRequest = {
@@ -42,6 +42,6 @@ export async function POST(request) {
     return NextResponse.json({ audioContent: audioContentBase64 });
   } catch (error) {
     console.error('API TTS Route Error:', error);
-    return NextResponse.json({ error: 'Failed to synthesize speech.', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to synthesize speech.', details: error.message, useBrowserFallback: true }, { status: 500 });
   }
 }
