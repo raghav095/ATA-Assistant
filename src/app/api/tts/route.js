@@ -26,12 +26,29 @@ export async function POST(request) {
       return NextResponse.json({ error: 'TTS Client not initialized.', useBrowserFallback: true }, { status: 500 });
     }
 
-    const isHindi = languageCode === 'hi-IN' || /[\u0900-\u097F]/.test(text);
+    let voiceLangCode = 'en-US';
+    let voiceName = 'en-US-Wavenet-F';
+
+    const hasDevanagari = /[\u0900-\u097F]/.test(text);
+
+    if (hasDevanagari) {
+      voiceLangCode = 'hi-IN';
+      voiceName = 'hi-IN-Wavenet-F';
+    } else if (
+      languageCode === 'hi-IN' || 
+      languageCode === 'en-IN' || 
+      language === 'Hindi/Hinglish' ||
+      language === 'hindi'
+    ) {
+      voiceLangCode = 'en-IN';
+      voiceName = 'en-IN-Wavenet-D';
+    }
+
     const ttsRequest = {
       input: { text },
       voice: { 
-        languageCode: isHindi ? 'hi-IN' : 'en-US', 
-        name: isHindi ? 'hi-IN-Wavenet-F' : 'en-US-Wavenet-F' 
+        languageCode: voiceLangCode, 
+        name: voiceName 
       },
       audioConfig: { audioEncoding: 'MP3', pitch: 0, speakingRate: 1.05 },
     };

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { VertexAI } from '@google-cloud/vertexai';
+import { GoogleGenAI } from '@google/genai';
 import { getAuthOptions } from '../auth-helper';
 import { runFallbackTriage } from './fallback-engine';
 
@@ -8,16 +8,20 @@ const PROJECT_ID = auth.projectId;
 const LOCATION = process.env.GCP_LOCATION || 'us-central1';
 const MODEL_NAME = 'gemini-2.5-flash';
 
-let vertexAI;
+let ai;
 try {
-  const vertexOpts = { project: PROJECT_ID, location: LOCATION };
+  const clientOpts = {
+    vertexai: true,
+    project: PROJECT_ID,
+    location: LOCATION
+  };
   if (auth.credentials) {
-    vertexOpts.googleAuthOptions = { credentials: auth.credentials };
+    clientOpts.googleAuthOptions = { credentials: auth.credentials };
   }
-  vertexAI = new VertexAI(vertexOpts);
-  console.log('Vertex AI API initialized.');
+  ai = new GoogleGenAI(clientOpts);
+  console.log('Google Gen AI SDK initialized for GCP Vertex AI.');
 } catch (err) {
-  console.error('Vertex AI init error:', err);
+  console.error('Google Gen AI SDK init error:', err);
 }
 
 // Negation-aware keyword matcher. For each occurrence of any keyword in `text`,
@@ -28,16 +32,20 @@ try {
 // "deny", "denied", "never", "no signs of", "negative for"). Returns true if
 // at least one occurrence of a keyword is positive (i.e. not negated within
 // the same sentence).
-const NEGATION_CUES = [
+const NEGATION_CUES_PRECEDING = [
   'no ', 'no,', 'no.', 'no!', 'no?', '\nno ',
   'not ', "n't ", "n't,", "n't.", "n't!", "n't?",
   'without ', 'denies ', 'deny ', 'denied ', 'never ',
-  'no signs of ', 'negative for '
+  'no signs of ', 'negative for ',
+  'nahi ', 'nahin ', 'na ', 'नहीं ', 'नही ', 'ना ', 'बिना ', 'nahi,', 'nahin,', 'nahi.', 'nahin.'
 ];
-// A "real" sentence boundary is a punctuation mark followed by a space and an
-// uppercase letter (or end of string). This avoids treating abbreviations
-// like "e.g." or "Dr." as sentence endings.
-const SENTENCE_BOUNDARY_REGEX = /[.!?]\s+[A-Z]|[.!?]\s*$/;
+
+const NEGATION_CUES_SUCCEEDING = [
+  'nahi', 'nahin', 'na', 'normal', 'theek', 'no',
+  'नहीं', 'नही', 'ना', 'ठीक', 'सामान्य'
+];
+
+const SENTENCE_BOUNDARY_REGEX = /[.!?]\s+[A-Z]|[\u0900-\u097F][.!?]\s*|[.!?]\s*$/;
 
 function isKeywordPositive(text, keywords) {
   if (!text) return false;
@@ -46,34 +54,114 @@ function isKeywordPositive(text, keywords) {
     if (!kw) continue;
     let idx = 0;
     while ((idx = t.indexOf(kw, idx)) !== -1) {
-      // Window: up to 35 chars before the keyword, plus a few trailing chars
-      // to catch "n't" that wraps past the keyword boundary.
       const windowStart = Math.max(0, idx - 35);
       const preceding = t.slice(windowStart, idx);
-      // If we cross a sentence boundary within the window, the keyword is in
-      // a new sentence and the prior sentence's negation does not apply.
-      const crossedBoundary = SENTENCE_BOUNDARY_REGEX.test(preceding);
-      if (crossedBoundary) {
-        idx += kw.length;
-        continue;
+      const crossedBoundaryPreceding = SENTENCE_BOUNDARY_REGEX.test(preceding);
+      let negatedPreceding = false;
+      if (!crossedBoundaryPreceding) {
+        for (const cue of NEGATION_CUES_PRECEDING) {
+          if (preceding.includes(cue)) { negatedPreceding = true; break; }
+        }
       }
-      // Check for any negation cue in the preceding window.
-      let negated = false;
-      for (const cue of NEGATION_CUES) {
-        if (preceding.includes(cue)) { negated = true; break; }
+      
+      const windowEnd = Math.min(t.length, idx + kw.length + 20);
+      const succeeding = t.slice(idx + kw.length, windowEnd);
+      const crossedBoundarySucceeding = SENTENCE_BOUNDARY_REGEX.test(succeeding);
+      let negatedSucceeding = false;
+      if (!crossedBoundarySucceeding) {
+        for (const cue of NEGATION_CUES_SUCCEEDING) {
+          const words = succeeding.split(/[^a-zA-Z0-9\u0900-\u097F]+/);
+          if (words.some(w => cue === w || (cue.trim() && w === cue.trim()))) {
+            negatedSucceeding = true;
+            break;
+          }
+          if (succeeding.includes(cue)) {
+            const cueIdx = succeeding.indexOf(cue);
+            const charBefore = succeeding[cueIdx - 1];
+            const charAfter = succeeding[cueIdx + cue.length];
+            const isWordBoundary = (char) => !char || /[^a-zA-Z0-9\u0900-\u097F]/.test(char);
+            if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+              negatedSucceeding = true;
+              break;
+            }
+          }
+        }
       }
-      if (!negated) return true; // found a positive (non-negated) occurrence
+      if (!negatedPreceding && !negatedSucceeding) return true;
       idx += kw.length;
     }
   }
   return false;
 }
 
+function isProximityMatchPositive(text, symptoms, contexts, maxDistance = 15) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  for (const sym of symptoms) {
+    let symIdx = 0;
+    while ((symIdx = t.indexOf(sym, symIdx)) !== -1) {
+      for (const ctx of contexts) {
+        let ctxIdx = 0;
+        while ((ctxIdx = t.indexOf(ctx, ctxIdx)) !== -1) {
+          let startIdx, endIdx;
+          if (ctxIdx < symIdx) {
+            startIdx = ctxIdx;
+            endIdx = symIdx + sym.length;
+          } else {
+            startIdx = symIdx;
+            endIdx = ctxIdx + ctx.length;
+          }
+          
+          const distance = Math.max(0, Math.abs(ctxIdx - symIdx) - (ctxIdx < symIdx ? ctx.length : sym.length));
+          if (distance <= maxDistance) {
+            const windowStart = Math.max(0, startIdx - 35);
+            const preceding = t.slice(windowStart, startIdx);
+            const crossedBoundaryPreceding = SENTENCE_BOUNDARY_REGEX.test(preceding);
+            let negatedPreceding = false;
+            if (!crossedBoundaryPreceding) {
+              for (const cue of NEGATION_CUES_PRECEDING) {
+                if (preceding.includes(cue)) { negatedPreceding = true; break; }
+              }
+            }
+            
+            const windowEnd = Math.min(t.length, endIdx + 20);
+            const succeeding = t.slice(endIdx, windowEnd);
+            const crossedBoundarySucceeding = SENTENCE_BOUNDARY_REGEX.test(succeeding);
+            let negatedSucceeding = false;
+            if (!crossedBoundarySucceeding) {
+              for (const cue of NEGATION_CUES_SUCCEEDING) {
+                const words = succeeding.split(/[^a-zA-Z0-9\u0900-\u097F]+/);
+                if (words.some(w => cue === w || (cue.trim() && w === cue.trim()))) {
+                  negatedSucceeding = true;
+                  break;
+                }
+                if (succeeding.includes(cue)) {
+                  const cueIdx = succeeding.indexOf(cue);
+                  const charBefore = succeeding[cueIdx - 1];
+                  const charAfter = succeeding[cueIdx + cue.length];
+                  const isWordBoundary = (char) => !char || /[^a-zA-Z0-9\u0900-\u097F]/.test(char);
+                  if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+                    negatedSucceeding = true;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (!negatedPreceding && !negatedSucceeding) {
+              return true;
+            }
+          }
+          ctxIdx += ctx.length;
+        }
+      }
+      symIdx += sym.length;
+    }
+  }
+  return false;
+}
+
 function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
-  // Aggregate the current message with prior user turns so that a multi-turn
-  // symptom combination (e.g. chest pain this turn, arm pain last turn) still
-  // triggers an override. Assistant messages are excluded — they don't carry
-  // patient-asserted symptoms.
   const userTurns = (chatHistory || [])
     .filter(m => m && m.role === 'user' && typeof m.content === 'string')
     .map(m => m.content);
@@ -81,29 +169,46 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
   const t = combined.toLowerCase();
   const complaint = (symptomProfile?.primaryComplaint || '').toLowerCase();
 
-  // Hindi keyword lists for safety override audit
-  const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
-  const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
-  const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
-  const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
-  const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
-  const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
+  // 1. Cardiac check
+  const cardiacPainSymptoms = ['dard', 'pain', 'khinchaav', 'khinchav', 'angina', 'खिंचाव', 'दर्द'];
+  const cardiacPainContexts = ['seene', 'chhati', 'dil', 'chest', 'heart', 'सीने', 'छाती', 'दिल'];
+  const cardiacPainDirect = [
+    'chest pain', 'heart pain', 'angina',
+    'seene me dard', 'chhati me dard', 'seene mein dard', 'chhati mein dard', 'dil me dard', 'dil mein dard', 'chest me dard',
+    'सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'
+  ];
 
-  const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
+  const hasChestPain = isKeywordPositive(t, cardiacPainDirect) || 
+                       isProximityMatchPositive(t, cardiacPainSymptoms, cardiacPainContexts) ||
+                       cardiacPainDirect.some(kw => complaint.includes(kw));
 
-  // 1. Cardiac override (Chest Pain + Arm/Jaw Pain or Crushing descriptors)
-  const hasChestPain =
-    t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') ||
-    complaint.includes('chest pain') ||
-    matchesAny(t, hindiCardiacPain) || matchesAny(complaint, hindiCardiacPain);
+  const radiatingSymptoms = ['dard', 'pain', 'sunn', 'heavy', 'radiation', 'radiating', 'दर्द', 'सुन्न', 'भारी'];
+  const radiatingContexts = [
+    'haath', 'arm', 'shoulder', 'jaw', 'back', 'kandhe', 'gardan', 'jabde', 'peeth', 'left hand', 'left arm',
+    'हाथ', 'कंधे', 'गर्दन', 'जबड़े', 'पीठ', 'बाएं हाथ', 'दाएं हाथ'
+  ];
+  const radiatingDirect = [
+    'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain', 'left arm', 'right arm', 'jaw pain', 'back pain',
+    'haath me dard', 'haath mein dard', 'left hand me pain', 'arm me dard', 'left arm me dard', 'shoulder me dard', 'back me dard',
+    'बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'
+  ];
 
-  const hasRadiatingPain = isKeywordPositive(t, [
-    'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain',
-    'left arm', 'right arm', 'jaw pain', 'back pain'
-  ]) || matchesAny(t, hindiCardiacRadiating);
+  const hasRadiatingPain = isKeywordPositive(t, radiatingDirect) ||
+                           isProximityMatchPositive(t, radiatingSymptoms, radiatingContexts);
 
-  const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent');
-  const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']) || matchesAny(t, hindiCardiacCrushing);
+  const crushingSymptoms = ['crushing', 'pressure', 'tightness', 'heavy', 'heaviness', 'bhari', 'bhaaripan', 'jakdan', 'dabav', 'दबाव', 'भारीपन', 'जकड़न'];
+  const crushingContexts = ['seene', 'chhati', 'dil', 'chest', 'heart', 'सीने', 'छाती', 'दिल'];
+  const crushingDirect = [
+    'crushing', 'pressure', 'tightness',
+    'bhari', 'bhaaripan', 'heavy', 'jakdan', 'dabav',
+    'दबाव', 'भारीपन', 'जकड़न'
+  ];
+
+  const hasCrushing = isKeywordPositive(t, crushingDirect) ||
+                      isProximityMatchPositive(t, crushingSymptoms, crushingContexts);
+
+  const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent') ||
+                            t.includes('बाईपास') || t.includes('स्टेंट') || t.includes('dil ki bimari');
 
   if (hasChestPain && (hasRadiatingPain || hasCardiacHistory || hasCrushing)) {
     return {
@@ -114,13 +219,18 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
     };
   }
 
-  // 2. Stroke override (FAST symptoms)
-  const hasStrokeSymptoms = isKeywordPositive(t, [
-    'slurred', 'slur', 'speech', 'drooping', 'droop',
-    'face numb', 'arm weakness',
-    'weakness on one side', 'numbness on one side', 'paralysis',
-    'stroke', 'face drooping'
-  ]) || matchesAny(t, hindiStroke);
+  // 2. Stroke check
+  const strokeSymptoms = ['slurred', 'slur', 'speech', 'drooping', 'droop', 'numb', 'weakness', 'paralysis', 'stroke', 'face drooping', 'sunn', 'lakwa', 'ladkhadana', 'dikkat', 'सुन्न', 'लकवा', 'लड़खड़ाना', 'कमजोरी', 'टेढ़ा'];
+  const strokeContexts = ['speech', 'face', 'arm', 'hand', 'side', 'mouth', 'aawaz', 'chehra', 'muh', 'haath', 'bolne', 'bol', 'आवाज़', 'बोली', 'चेहरे', 'मुंह', 'हाथ', 'अंग'];
+  const strokeDirect = [
+    'slurred', 'slur', 'speech', 'drooping', 'droop', 'face numb', 'arm weakness',
+    'weakness on one side', 'numbness on one side', 'paralysis', 'stroke', 'face drooping',
+    'bolne me dikkat', 'bolne mein dikkat', 'aawaz ladkhadana', 'sunn', 'lakwa', 'ladkhadana',
+    'बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'
+  ];
+
+  const hasStrokeSymptoms = isKeywordPositive(t, strokeDirect) ||
+                            isProximityMatchPositive(t, strokeSymptoms, strokeContexts);
 
   if (hasStrokeSymptoms) {
     return {
@@ -131,11 +241,21 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
     };
   }
 
-  // 3. Thunderclap headache override
-  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache') || t.includes('सिरदर्द') || complaint.includes('सिरदर्द');
-  const isThunderclap = isKeywordPositive(t, [
-    'sudden', 'worst', 'thunderclap', 'exploding', 'instant'
-  ]) || matchesAny(t, hindiThunderclap);
+  // 3. Thunderclap Headache check
+  const headacheSymptoms = ['headache', 'migraine', 'pain', 'sir dard', 'sar dard', 'dard', 'सिरदर्द', 'दर्द'];
+  const headacheContexts = ['sudden', 'worst', 'thunderclap', 'exploding', 'instant', 'achanak', 'tez', 'bhayankar', 'अचानक', 'तेज़', 'भयंकर', 'बुरा'];
+  const headacheDirect = [
+    'thunderclap', 'worst headache',
+    'achanak tez sar dard', 'achanak sir dard', 'bhayankar sar dard', 'bhayankar sir dard',
+    'अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'
+  ];
+
+  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache') ||
+                     t.includes('sir dard') || t.includes('sar dard') || complaint.includes('sir dard') ||
+                     t.includes('सिरदर्द') || complaint.includes('सिरदर्द');
+
+  const isThunderclap = isKeywordPositive(t, headacheDirect) ||
+                        isProximityMatchPositive(t, headacheSymptoms, headacheContexts);
 
   if (isHeadache && isThunderclap) {
     return {
@@ -147,10 +267,17 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
   }
 
   // 4. Severe breathing difficulty
-  const hasBreathingDifficulty = isKeywordPositive(t, [
+  const breathingSymptoms = ['shortness', 'difficulty', 'cant', "can't", 'struggling', 'gasping', 'asphyxia', 'takleef', 'dikkat', 'fulna', 'phulna', 'तकलीफ', 'फूलना', 'दिक्कत'];
+  const breathingContexts = ['breath', 'breathing', 'saas', 'saans', 'साँस', 'सांस'];
+  const breathingDirect = [
     'shortness of breath', 'difficulty breathing', "can't breathe", 'cant breathe',
-    'struggling to breathe', 'gasping', 'asphyxia'
-  ]) || matchesAny(t, hindiRespiratory);
+    'struggling to breathe', 'gasping', 'asphyxia',
+    'saas lene me takleef', 'saans lene mein takleef', 'saas fulna', 'saans phulna', 'saas lene me dikkat',
+    'साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत', 'सांस लेने में तकलीफ', 'सांस फूलना', 'सांस की दिक्कत'
+  ];
+
+  const hasBreathingDifficulty = isKeywordPositive(t, breathingDirect) ||
+                                 isProximityMatchPositive(t, breathingSymptoms, breathingContexts);
 
   if (hasBreathingDifficulty) {
     return {
@@ -193,43 +320,9 @@ export async function POST(request) {
 
     let resultJson;
     try {
-      if (!vertexAI) {
-        throw new Error('Vertex AI client not initialized');
+      if (!ai) {
+        throw new Error('Google Gen AI client not initialized');
       }
-
-      // Generate Adaptive Questions via Vertex AI
-      const model = vertexAI.getGenerativeModel({
-        model: MODEL_NAME,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'object',
-            properties: {
-              nextQuestion: { type: 'string', description: 'The next clinical clarifying question to ask the patient.' },
-              symptomProfile: {
-                type: 'object',
-                properties: {
-                  primaryComplaint: { type: 'string', description: 'Brief summary of the primary complaint.' },
-                  duration: { type: 'string', description: 'Duration of the symptoms.' },
-                  severity: { type: 'string', enum: ['Mild', 'Moderate', 'Severe', 'Unspecified'] },
-                  associatedSymptoms: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'List of associated symptoms mentioned or inferred.'
-                  },
-                  history: { type: 'string', description: 'Relevant history or chronic conditions mentioned.' }
-                },
-                required: ['primaryComplaint', 'duration', 'severity', 'associatedSymptoms', 'history']
-              },
-              urgencyEstimation: {
-                type: 'string',
-                enum: ['Emergency Now', 'A&E Today', 'GP Urgent', 'GP Routine', 'Self-Care', 'Unspecified']
-              }
-            },
-            required: ['nextQuestion', 'symptomProfile', 'urgencyEstimation']
-          }
-        }
-      });
 
       let systemPrompt = `You are a Senior Clinical Triage Nurse with 15+ years of experience in emergency and primary-care settings. Your goal is to gather information about a patient's symptoms, classify their clinical urgency, and guide them to the right level of care with empathy and clarity.
 
@@ -237,8 +330,10 @@ Tone & Empathy:
 - Open every assistant turn with a brief, genuine empathic acknowledgement (e.g. "I'm sorry to hear that", "That sounds uncomfortable", "Thank you for describing that"). One short sentence — do not overdo it.
 - Use warm, plain language. Avoid robotic checklists.
 
-Dialogue Discipline (CRITICAL):
+Dialogue Discipline & Clinical Jargon Prevention (CRITICAL):
 - Ask exactly ONE clear, concise question per turn. Never bundle multiple questions in a single response.
+- Rule 7: Do NOT use complex medical jargon or clinical doctor terms (e.g., do not say dyspnea, paresthesia, syncope, angina, or similar professional terminology). Use simple, reassuring layperson terms that any patient can easily understand (e.g., ask "are you having trouble catching your breath?" instead of "are you experiencing dyspnea?"; ask "does the pain spread to your arm?" instead of "are you experiencing radiating paresthesia?"; ask "do you feel lightheaded or like you might pass out?" instead of "have you had any syncope?").
+- Rule 8: Ask deep, detailed, and realistic clarifying questions based on the presenting complaint. Avoid generic, broad questions.
 - Do not re-ask about symptoms that are already populated in the 'symptomProfile' (primaryComplaint, duration, severity, associatedSymptoms, history). Review the profile before each question.
 - Do not re-introduce yourself, repeat the greeting, or restate information the patient just gave you.
 - The dialogue should graduate through three phases and then close:
@@ -269,8 +364,8 @@ Urgency Tiers — update 'urgencyEstimation' as you gain confidence:
 Closing Rule:
 - Once you set 'urgencyEstimation' to any value other than 'Unspecified' AND the patient profile has primaryComplaint, duration, severity, and at least one associated symptom or history entry, you are in the closing phase. Emit the closing message described above and do not ask another question.
 
-Language Rule (CRITICAL):
-- Detect the language of the patient's input. If the patient communicates in Hindi (or Hinglish), you must generate the conversational 'nextQuestion' in natural Hindi. If the patient communicates in English, respond in English.
+Language Rule & Lock (CRITICAL):
+- Detect the language of the patient's input and their demographic preferences. If the patient communicates in Hindi or Hinglish, you MUST generate the conversational 'nextQuestion' in natural Hindi (using Devanagari script for Hindi, or Latin script / Hinglish for Hinglish, matching the style the user is speaking/typing). Lock the language for all subsequent responses to match their choice (do not flip-flop between Hindi/Hinglish and English mid-conversation). If they speak English, respond strictly in English.
 
 Current state:
 - Symptom Profile: ${JSON.stringify(symptomProfile || {})}
@@ -285,9 +380,7 @@ Current state:
     * Pre-existing Medical History: ${patientInfo.preExistingHistory || 'None declared'}`;
       }
 
-      const contents = [
-        { role: 'user', parts: [{ text: systemPrompt }] }
-      ];
+      const contents = [];
 
       if (chatHistory && chatHistory.length > 0) {
         chatHistory.forEach(msg => {
@@ -322,11 +415,45 @@ Current state:
         parts: userParts
       });
 
-      const response = await model.generateContent({ contents });
-      const responseText = response.response.candidates[0].content.parts[0].text;
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: contents,
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              nextQuestion: { type: 'STRING', description: 'The next clinical clarifying question to ask the patient.' },
+              symptomProfile: {
+                type: 'OBJECT',
+                properties: {
+                  primaryComplaint: { type: 'STRING', description: 'Brief summary of the primary complaint.' },
+                  duration: { type: 'STRING', description: 'Duration of the symptoms.' },
+                  severity: { type: 'STRING', enum: ['Mild', 'Moderate', 'Severe', 'Unspecified'] },
+                  associatedSymptoms: {
+                    type: 'ARRAY',
+                    items: { type: 'STRING' },
+                    description: 'List of associated symptoms mentioned or inferred.'
+                  },
+                  history: { type: 'STRING', description: 'Relevant history or chronic conditions mentioned.' }
+                },
+                required: ['primaryComplaint', 'duration', 'severity', 'associatedSymptoms', 'history']
+              },
+              urgencyEstimation: {
+                type: 'STRING',
+                enum: ['Emergency Now', 'A&E Today', 'GP Urgent', 'GP Routine', 'Self-Care', 'Unspecified']
+              }
+            },
+            required: ['nextQuestion', 'symptomProfile', 'urgencyEstimation']
+          }
+        }
+      });
+
+      const responseText = response.text;
       resultJson = JSON.parse(responseText);
     } catch (gcpError) {
-      console.warn('Vertex AI content generation failed, falling back to local clinical triage logic:', gcpError.message);
+      console.warn('Google Gen AI content generation failed, falling back to local clinical triage logic:', gcpError.message);
       resultJson = runFallbackTriage(message, chatHistory, symptomProfile, patientInfo);
     }
 

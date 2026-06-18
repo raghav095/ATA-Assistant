@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { VertexAI } from '@google-cloud/vertexai';
+import { GoogleGenAI } from '@google/genai';
 import { getAuthOptions } from '../auth-helper';
 import { runFallbackSummary } from './fallback-summary';
 
@@ -8,69 +8,42 @@ const PROJECT_ID = auth.projectId;
 const LOCATION = process.env.GCP_LOCATION || 'us-central1';
 const MODEL_NAME = 'gemini-2.5-flash';
 
-let vertexAI;
+let ai;
 try {
-  const vertexOpts = { project: PROJECT_ID, location: LOCATION };
+  const clientOpts = {
+    vertexai: true,
+    project: PROJECT_ID,
+    location: LOCATION
+  };
   if (auth.credentials) {
-    vertexOpts.googleAuthOptions = { credentials: auth.credentials };
+    clientOpts.googleAuthOptions = { credentials: auth.credentials };
   }
-  vertexAI = new VertexAI(vertexOpts);
+  ai = new GoogleGenAI(clientOpts);
+  console.log('Google Gen AI SDK initialized for Handover Summary.');
 } catch (err) {
-  console.error('Vertex AI init error:', err);
+  console.error('Google Gen AI SDK init error:', err);
 }
 
 export async function POST(request) {
   try {
-    const { chatHistory, symptomProfile, patientInfo } = await request.json();
+    const { chatHistory, symptomProfile, patientInfo, language } = await request.json();
 
     let resultJson;
     try {
-      if (!vertexAI) {
-        throw new Error('Vertex AI client not initialized');
+      if (!ai) {
+        throw new Error('Google Gen AI client not initialized');
       }
 
-      const model = vertexAI.getGenerativeModel({
-        model: MODEL_NAME,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'object',
-            properties: {
-              urgency: { 
-                type: 'string', 
-                enum: ['Emergency Now', 'A&E Today', 'GP Urgent', 'GP Routine', 'Self-Care'] 
-              },
-              reasoning: { type: 'string', description: 'Clinical reasoning behind the triage classification.' },
-              summary: {
-                type: 'object',
-                properties: {
-                  presentingComplaint: { type: 'string' },
-                  symptomTimeline: { type: 'string' },
-                  associatedSymptoms: { type: 'array', items: { type: 'string' } },
-                  medicalHistory: { type: 'string' },
-                  clinicalUrgencyAssessment: { type: 'string' }
-                },
-                required: ['presentingComplaint', 'symptomTimeline', 'associatedSymptoms', 'medicalHistory', 'clinicalUrgencyAssessment']
-              },
-              pathwayGuidance: {
-                type: 'object',
-                properties: {
-                  whatToDo: { type: 'string', description: 'Step-by-step actionable advice for the patient.' },
-                  whatToTellProvider: { type: 'string', description: 'Brief script or bullet points for when they speak to a clinician.' },
-                  redFlags: { type: 'array', items: { type: 'string' }, description: 'Symptoms that should trigger immediate emergency re-routing if they develop.' }
-                },
-                required: ['whatToDo', 'whatToTellProvider', 'redFlags']
-              }
-            },
-            required: ['urgency', 'reasoning', 'summary', 'pathwayGuidance']
-          }
-        }
-      });
+      const userLanguage = language || patientInfo?.language || 'English';
 
       let summaryPrompt = `You are a Senior Clinical Triage Officer. Generate a final structured Patient Summary and Care Pathway Guidance based on the symptom intake conversation history.
   Evaluate the timeline, severity, history, and associated symptoms to provide a safe, accurate triage recommendation.
   
   Format the output strictly as JSON.
+  
+  Language Customization Rule:
+  The patient's preferred language is: ${userLanguage}.
+  If the preferred language is Hindi or Hinglish, please output the patient-facing guidance (specifically the 'summary' fields and 'pathwayGuidance.whatToDo' / 'pathwayGuidance.whatToTellProvider') in natural, clear Hindi (Hindi Devanagari script or Hinglish Latin script matching how the patient was responding in the chat history) to ensure they can understand it. Keep the clinical reasoning or professional fields in English if desired, but prioritize the patient's language for patient-facing instructions.
   `;
 
       if (patientInfo) {
@@ -80,6 +53,7 @@ export async function POST(request) {
   - Age: ${patientInfo.age || 'Unknown'}
   - Biological Sex: ${patientInfo.sex || 'Unknown'}
   - Pre-existing Medical History: ${patientInfo.preExistingHistory || 'None declared'}
+  - Preferred Language: ${userLanguage}
   `;
       }
 
@@ -91,14 +65,49 @@ export async function POST(request) {
   ${JSON.stringify(symptomProfile || {})}
   `;
 
-      const response = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: summaryPrompt }] }]
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: summaryPrompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              urgency: { 
+                type: 'STRING', 
+                enum: ['Emergency Now', 'A&E Today', 'GP Urgent', 'GP Routine', 'Self-Care'] 
+              },
+              reasoning: { type: 'STRING', description: 'Clinical reasoning behind the triage classification.' },
+              summary: {
+                type: 'OBJECT',
+                properties: {
+                  presentingComplaint: { type: 'STRING' },
+                  symptomTimeline: { type: 'STRING' },
+                  associatedSymptoms: { type: 'ARRAY', items: { type: 'STRING' } },
+                  medicalHistory: { type: 'STRING' },
+                  clinicalUrgencyAssessment: { type: 'STRING' }
+                },
+                required: ['presentingComplaint', 'symptomTimeline', 'associatedSymptoms', 'medicalHistory', 'clinicalUrgencyAssessment']
+              },
+              pathwayGuidance: {
+                type: 'OBJECT',
+                properties: {
+                  whatToDo: { type: 'STRING', description: 'Step-by-step actionable advice for the patient.' },
+                  whatToTellProvider: { type: 'STRING', description: 'Brief script or bullet points for when they speak to a clinician.' },
+                  redFlags: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Symptoms that should trigger immediate emergency re-routing if they develop.' }
+                },
+                required: ['whatToDo', 'whatToTellProvider', 'redFlags']
+              }
+            },
+            required: ['urgency', 'reasoning', 'summary', 'pathwayGuidance']
+          }
+        }
       });
 
-      const responseText = response.response.candidates[0].content.parts[0].text;
+      const responseText = response.text;
       resultJson = JSON.parse(responseText);
     } catch (gcpError) {
-      console.warn('Vertex AI summary compilation failed, falling back to local summary logic:', gcpError.message);
+      console.warn('Google Gen AI summary compilation failed, falling back to local summary logic:', gcpError.message);
       resultJson = runFallbackSummary(chatHistory, symptomProfile, patientInfo);
     }
 

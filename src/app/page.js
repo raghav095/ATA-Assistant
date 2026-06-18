@@ -105,13 +105,15 @@ export default function AegisTriageApp() {
     name: '',
     age: '',
     sex: 'Male',
-    preExistingHistory: ''
+    preExistingHistory: '',
+    language: 'English'
   });
   const [checkInInput, setCheckInInput] = useState({
     name: '',
     age: '',
     sex: 'Male',
-    preExistingHistory: ''
+    preExistingHistory: '',
+    language: 'English'
   });
 
   // Multimodal Image State
@@ -184,6 +186,7 @@ export default function AegisTriageApp() {
           setPatientInfo(parsed);
           setCheckInInput(parsed);
           setIsCheckedIn(true);
+          setInputLanguage(parsed.language === 'Hindi/Hinglish' ? 'hi-IN' : 'en-US');
           setSymptomProfile(prev => ({
             ...prev,
             history: parsed.preExistingHistory || ''
@@ -357,7 +360,11 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, languageCode: inputLanguage })
+        body: JSON.stringify({ 
+          text, 
+          languageCode: inputLanguage,
+          language: patientInfo?.language || 'English'
+        })
       });
       const data = await response.json();
       if (data.audioContent && !data.useBrowserFallback) {
@@ -401,7 +408,11 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, languageCode: inputLanguage })
+        body: JSON.stringify({ 
+          text, 
+          languageCode: inputLanguage,
+          language: patientInfo?.language || 'English'
+        })
       });
       const data = await response.json();
       if (capturedGeneration !== sessionGenerationRef.current) return;
@@ -642,7 +653,8 @@ export default function AegisTriageApp() {
           message: text,
           chatHistory: chatHistory,
           symptomProfile: symptomProfile,
-          patientInfo: patientInfo
+          patientInfo: patientInfo,
+          language: patientInfo?.language || 'English'
         })
       });
 
@@ -689,17 +701,21 @@ export default function AegisTriageApp() {
   };
 
   // Safety checker client logs preview
-  // Negation-aware keyword matcher. Mirrors the server-side helper in
-  // route.js so the Guardrails tab stays in sync with the Vertex AI override
-  // decision. A keyword is "positive" only if at least one occurrence sits
-  // inside a sentence that has no preceding negation cue within 35 chars.
-  const NEGATION_CUES = [
+  const NEGATION_CUES_PRECEDING = [
     'no ', 'no,', 'no.', 'no!', 'no?', '\nno ',
     'not ', "n't ", "n't,", "n't.", "n't!", "n't?",
     'without ', 'denies ', 'deny ', 'denied ', 'never ',
-    'no signs of ', 'negative for '
+    'no signs of ', 'negative for ',
+    'nahi ', 'nahin ', 'na ', 'नहीं ', 'नही ', 'ना ', 'बिना ', 'nahi,', 'nahin,', 'nahi.', 'nahin.'
   ];
-  const SENTENCE_BOUNDARY_REGEX = /[.!?]\s+[A-Z]|[.!?]\s*$/;
+
+  const NEGATION_CUES_SUCCEEDING = [
+    'nahi', 'nahin', 'na', 'normal', 'theek', 'no',
+    'नहीं', 'नही', 'ना', 'ठीक', 'सामान्य'
+  ];
+
+  const SENTENCE_BOUNDARY_REGEX = /[.!?]\s+[A-Z]|[\u0900-\u097F][.!?]\s*|[.!?]\s*$/;
+
   const isKeywordPositive = (text, keywords) => {
     if (!text) return false;
     const t = text.toLowerCase();
@@ -709,23 +725,112 @@ export default function AegisTriageApp() {
       while ((idx = t.indexOf(kw, idx)) !== -1) {
         const windowStart = Math.max(0, idx - 35);
         const preceding = t.slice(windowStart, idx);
-        const crossedBoundary = SENTENCE_BOUNDARY_REGEX.test(preceding);
-        if (crossedBoundary) { idx += kw.length; continue; }
-        let negated = false;
-        for (const cue of NEGATION_CUES) {
-          if (preceding.includes(cue)) { negated = true; break; }
+        const crossedBoundaryPreceding = SENTENCE_BOUNDARY_REGEX.test(preceding);
+        let negatedPreceding = false;
+        if (!crossedBoundaryPreceding) {
+          for (const cue of NEGATION_CUES_PRECEDING) {
+            if (preceding.includes(cue)) { negatedPreceding = true; break; }
+          }
         }
-        if (!negated) return true;
+        
+        const windowEnd = Math.min(t.length, idx + kw.length + 20);
+        const succeeding = t.slice(idx + kw.length, windowEnd);
+        const crossedBoundarySucceeding = SENTENCE_BOUNDARY_REGEX.test(succeeding);
+        let negatedSucceeding = false;
+        if (!crossedBoundarySucceeding) {
+          for (const cue of NEGATION_CUES_SUCCEEDING) {
+            const words = succeeding.split(/[^a-zA-Z0-9\u0900-\u097F]+/);
+            if (words.some(w => cue === w || (cue.trim() && w === cue.trim()))) {
+              negatedSucceeding = true;
+              break;
+            }
+            if (succeeding.includes(cue)) {
+              const cueIdx = succeeding.indexOf(cue);
+              const charBefore = succeeding[cueIdx - 1];
+              const charAfter = succeeding[cueIdx + cue.length];
+              const isWordBoundary = (char) => !char || /[^a-zA-Z0-9\u0900-\u097F]/.test(char);
+              if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+                negatedSucceeding = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!negatedPreceding && !negatedSucceeding) return true;
         idx += kw.length;
       }
     }
     return false;
   };
 
+  const isProximityMatchPositive = (text, symptoms, contexts, maxDistance = 15) => {
+    if (!text) return false;
+    const t = text.toLowerCase();
+    for (const sym of symptoms) {
+      let symIdx = 0;
+      while ((symIdx = t.indexOf(sym, symIdx)) !== -1) {
+        for (const ctx of contexts) {
+          let ctxIdx = 0;
+          while ((ctxIdx = t.indexOf(ctx, ctxIdx)) !== -1) {
+            let startIdx, endIdx;
+            if (ctxIdx < symIdx) {
+              startIdx = ctxIdx;
+              endIdx = symIdx + sym.length;
+            } else {
+              startIdx = symIdx;
+              endIdx = ctxIdx + ctx.length;
+            }
+            
+            const distance = Math.max(0, Math.abs(ctxIdx - symIdx) - (ctxIdx < symIdx ? ctx.length : sym.length));
+            if (distance <= maxDistance) {
+              const windowStart = Math.max(0, startIdx - 35);
+              const preceding = t.slice(windowStart, startIdx);
+              const crossedBoundaryPreceding = SENTENCE_BOUNDARY_REGEX.test(preceding);
+              let negatedPreceding = false;
+              if (!crossedBoundaryPreceding) {
+                for (const cue of NEGATION_CUES_PRECEDING) {
+                  if (preceding.includes(cue)) { negatedPreceding = true; break; }
+                }
+              }
+              
+              const windowEnd = Math.min(t.length, endIdx + 20);
+              const succeeding = t.slice(endIdx, windowEnd);
+              const crossedBoundarySucceeding = SENTENCE_BOUNDARY_REGEX.test(succeeding);
+              let negatedSucceeding = false;
+              if (!crossedBoundarySucceeding) {
+                for (const cue of NEGATION_CUES_SUCCEEDING) {
+                  const words = succeeding.split(/[^a-zA-Z0-9\u0900-\u097F]+/);
+                  if (words.some(w => cue === w || (cue.trim() && w === cue.trim()))) {
+                    negatedSucceeding = true;
+                    break;
+                  }
+                  if (succeeding.includes(cue)) {
+                    const cueIdx = succeeding.indexOf(cue);
+                    const charBefore = succeeding[cueIdx - 1];
+                    const charAfter = succeeding[cueIdx + cue.length];
+                    const isWordBoundary = (char) => !char || /[^a-zA-Z0-9\u0900-\u097F]/.test(char);
+                    if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+                      negatedSucceeding = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              if (!negatedPreceding && !negatedSucceeding) {
+                return true;
+              }
+            }
+            ctxIdx += ctx.length;
+          }
+        }
+        symIdx += sym.length;
+      }
+    }
+    return false;
+  };
+
   const runLocalAudit = (text, history) => {
-    // Aggregate the current message with prior user turns so a multi-turn
-    // symptom combination (e.g. chest pain this turn, arm pain last turn)
-    // surfaces in the audit log just as it would on the server.
     const userTurns = (history || [])
       .filter(m => m && m.role === 'user' && typeof m.content === 'string')
       .map(m => m.content);
@@ -733,50 +838,99 @@ export default function AegisTriageApp() {
     const t = combined.toLowerCase();
     let matched = [];
 
-    // Hindi keyword lists for safety override audit
-    const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
-    const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
-    const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
-    const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
-    const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
-    const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
-
-    const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
-
     // 1. Cardiac check
-    const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') || matchesAny(t, hindiCardiacPain);
-    const hasRadiating = isKeywordPositive(t, [
-      'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain',
-      'left arm', 'right arm', 'jaw pain', 'back pain'
-    ]) || matchesAny(t, hindiCardiacRadiating);
-    const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']) || matchesAny(t, hindiCardiacCrushing);
-    if (hasChestPain && (hasRadiating || hasCrushing)) {
+    const cardiacPainSymptoms = ['dard', 'pain', 'khinchaav', 'khinchav', 'angina', 'खिंचाव', 'दर्द'];
+    const cardiacPainContexts = ['seene', 'chhati', 'dil', 'chest', 'heart', 'सीने', 'छाती', 'दिल'];
+    const cardiacPainDirect = [
+      'chest pain', 'heart pain', 'angina',
+      'seene me dard', 'chhati me dard', 'seene mein dard', 'chhati mein dard', 'dil me dard', 'dil mein dard', 'chest me dard',
+      'सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'
+    ];
+
+    const hasChestPain = isKeywordPositive(t, cardiacPainDirect) || 
+                         isProximityMatchPositive(t, cardiacPainSymptoms, cardiacPainContexts);
+
+    const radiatingSymptoms = ['dard', 'pain', 'sunn', 'heavy', 'radiation', 'radiating', 'दर्द', 'सुन्न', 'भारी'];
+    const radiatingContexts = [
+      'haath', 'arm', 'shoulder', 'jaw', 'back', 'kandhe', 'gardan', 'jabde', 'peeth', 'left hand', 'left arm',
+      'हाथ', 'कंधे', 'गर्दन', 'जबड़े', 'पीठ', 'बाएं हाथ', 'दाएं हाथ'
+    ];
+    const radiatingDirect = [
+      'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain', 'left arm', 'right arm', 'jaw pain', 'back pain',
+      'haath me dard', 'haath mein dard', 'left hand me pain', 'arm me dard', 'left arm me dard', 'shoulder me dard', 'back me dard',
+      'बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'
+    ];
+
+    const hasRadiatingPain = isKeywordPositive(t, radiatingDirect) ||
+                             isProximityMatchPositive(t, radiatingSymptoms, radiatingContexts);
+
+    const crushingSymptoms = ['crushing', 'pressure', 'tightness', 'heavy', 'heaviness', 'bhari', 'bhaaripan', 'jakdan', 'dabav', 'दबाव', 'भारीपन', 'जकड़न'];
+    const crushingContexts = ['seene', 'chhati', 'dil', 'chest', 'heart', 'सीने', 'छाती', 'दिल'];
+    const crushingDirect = [
+      'crushing', 'pressure', 'tightness',
+      'bhari', 'bhaaripan', 'heavy', 'jakdan', 'dabav',
+      'दबाव', 'भारीपन', 'जकड़न'
+    ];
+
+    const hasCrushing = isKeywordPositive(t, crushingDirect) ||
+                        isProximityMatchPositive(t, crushingSymptoms, crushingContexts);
+
+    const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent') ||
+                              t.includes('बाईपास') || t.includes('स्टेंट') || t.includes('dil ki bimari');
+
+    if (hasChestPain && (hasRadiatingPain || hasCardiacHistory || hasCrushing)) {
       matched.push("Potential Cardiac Event");
     }
 
     // 2. Stroke check
-    const hasStroke = isKeywordPositive(t, [
-      'slurred', 'slur', 'speech', 'drooping', 'droop',
-      'face numb', 'arm weakness',
-      'weakness on one side', 'numbness on one side', 'stroke', 'face drooping'
-    ]) || matchesAny(t, hindiStroke);
-    if (hasStroke) {
+    const strokeSymptoms = ['slurred', 'slur', 'speech', 'drooping', 'droop', 'numb', 'weakness', 'paralysis', 'stroke', 'face drooping', 'sunn', 'lakwa', 'ladkhadana', 'dikkat', 'सुन्न', 'लकवा', 'लड़खड़ाना', 'कमजोरी', 'टेढ़ा'];
+    const strokeContexts = ['speech', 'face', 'arm', 'hand', 'side', 'mouth', 'aawaz', 'chehra', 'muh', 'haath', 'bolne', 'bol', 'आवाज़', 'बोली', 'चेहरे', 'मुंह', 'हाथ', 'अंग'];
+    const strokeDirect = [
+      'slurred', 'slur', 'speech', 'drooping', 'droop', 'face numb', 'arm weakness',
+      'weakness on one side', 'numbness on one side', 'paralysis', 'stroke', 'face drooping',
+      'bolne me dikkat', 'bolne mein dikkat', 'aawaz ladkhadana', 'sunn', 'lakwa', 'ladkhadana',
+      'बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'
+    ];
+
+    const hasStrokeSymptoms = isKeywordPositive(t, strokeDirect) ||
+                              isProximityMatchPositive(t, strokeSymptoms, strokeContexts);
+
+    if (hasStrokeSymptoms) {
       matched.push("Potential Stroke (FAST)");
     }
 
     // 3. Thunderclap Headache check
-    const isHeadache = t.includes('headache') || t.includes('migraine') || t.includes('सिरदर्द');
-    const isSudden = isKeywordPositive(t, ['sudden', 'worst', 'thunderclap', 'exploding']) || matchesAny(t, hindiThunderclap);
-    if (isHeadache && isSudden) {
+    const headacheSymptoms = ['headache', 'migraine', 'pain', 'sir dard', 'sar dard', 'dard', 'सिरदर्द', 'दर्द'];
+    const headacheContexts = ['sudden', 'worst', 'thunderclap', 'exploding', 'instant', 'achanak', 'tez', 'bhayankar', 'अचानक', 'तेज़', 'भयंकर', 'बुरा'];
+    const headacheDirect = [
+      'thunderclap', 'worst headache',
+      'achanak tez sar dard', 'achanak sir dard', 'bhayankar sar dard', 'bhayankar sir dard',
+      'अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'
+    ];
+
+    const isHeadache = t.includes('headache') || t.includes('migraine') || t.includes('sir dard') || t.includes('sar dard') || t.includes('सिरदर्द');
+
+    const isThunderclap = isKeywordPositive(t, headacheDirect) ||
+                          isProximityMatchPositive(t, headacheSymptoms, headacheContexts);
+
+    if (isHeadache && isThunderclap) {
       matched.push("Potential Thunderclap Headache");
     }
 
-    // 4. Breathing check
-    const isBreathing = isKeywordPositive(t, [
+    // 4. Severe breathing difficulty
+    const breathingSymptoms = ['shortness', 'difficulty', 'cant', "can't", 'struggling', 'gasping', 'asphyxia', 'takleef', 'dikkat', 'fulna', 'phulna', 'तकलीफ', 'फूलना', 'दिक्कत'];
+    const breathingContexts = ['breath', 'breathing', 'saas', 'saans', 'साँस', 'सांस'];
+    const breathingDirect = [
       'shortness of breath', 'difficulty breathing', "can't breathe", 'cant breathe',
-      'struggling to breathe', 'gasping'
-    ]) || matchesAny(t, hindiRespiratory);
-    if (isBreathing) {
+      'struggling to breathe', 'gasping', 'asphyxia',
+      'saas lene me takleef', 'saans lene mein takleef', 'saas fulna', 'saans phulna', 'saas lene me dikkat',
+      'साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत', 'सांस लेने में तकलीफ', 'सांस फूलना', 'सांस की दिक्कत'
+    ];
+
+    const hasBreathingDifficulty = isKeywordPositive(t, breathingDirect) ||
+                                   isProximityMatchPositive(t, breathingSymptoms, breathingContexts);
+
+    if (hasBreathingDifficulty) {
       matched.push("Potential Respiratory Distress");
     }
 
@@ -822,6 +976,7 @@ export default function AegisTriageApp() {
           chatHistory: chatHistory,
           symptomProfile: symptomProfile,
           patientInfo: patientInfo,
+          language: patientInfo?.language || 'English',
           image: activeImage?.base64 || null,
           imageMime: activeImage?.mimeType || null
         })
@@ -907,7 +1062,8 @@ export default function AegisTriageApp() {
         body: JSON.stringify({
           chatHistory: chatHistory,
           symptomProfile: symptomProfile,
-          patientInfo: patientInfo
+          patientInfo: patientInfo,
+          language: patientInfo?.language || 'English'
         })
       });
 
@@ -976,6 +1132,7 @@ export default function AegisTriageApp() {
               e.preventDefault();
               if (!checkInInput.name.trim()) return;
               setPatientInfo(checkInInput);
+              setInputLanguage(checkInInput.language === 'Hindi/Hinglish' ? 'hi-IN' : 'en-US');
               setSymptomProfile(prev => ({
                 ...prev,
                 history: checkInInput.preExistingHistory || ''
@@ -1038,6 +1195,18 @@ export default function AegisTriageApp() {
                     value={checkInInput.preExistingHistory}
                     onChange={(e) => setCheckInInput(prev => ({ ...prev, preExistingHistory: e.target.value }))}
                   ></textarea>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="patient-language-input">Preferred Language</label>
+                  <select 
+                    id="patient-language-input"
+                    value={checkInInput.language || 'English'}
+                    onChange={(e) => setCheckInInput(prev => ({ ...prev, language: e.target.value }))}
+                    required
+                  >
+                    <option value="English">English</option>
+                    <option value="Hindi/Hinglish">Hindi / Hinglish (हिंदी / Hinglish)</option>
+                  </select>
                 </div>
               </div>
               <div className="checkin-footer">
@@ -1320,7 +1489,7 @@ export default function AegisTriageApp() {
                         intercepted by a safety override. Gives the patient an
                         explicit in-chat hand-off to the care pathway report. */}
                     {currentUrgency !== 'Unspecified' && !guardrailTriggered && (
-                      <div className="triage-complete-card" role="status" aria-live="polite">
+                      <div className={`triage-complete-card urgency-${currentUrgency.replace(/[\s&]+/g, '-')}`} role="status" aria-live="polite">
                         <div className="triage-complete-header">
                           <span className="triage-complete-icon">
                             <CheckCircle2 size={18} strokeWidth={2.4} />
@@ -1359,11 +1528,13 @@ export default function AegisTriageApp() {
                   </div>
 
                   {/* Suggestions Tag Pills */}
-                  <div className="chat-suggestions">
-                    <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.cardiac)}>Chest & Arm Pain</button>
-                    <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.tension_headache)}>Screen Headache</button>
-                    <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.cold)}>Mild Cold Symptoms</button>
-                  </div>
+                  {currentUrgency === 'Unspecified' && !guardrailTriggered && (
+                    <div className="chat-suggestions">
+                      <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.cardiac)}>Chest & Arm Pain</button>
+                      <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.tension_headache)}>Screen Headache</button>
+                      <button className="suggestion-tag" onClick={() => runTestSimulation(testCases.cold)}>Mild Cold Symptoms</button>
+                    </div>
+                  )}
 
                   <div className="chat-input-area">
                     {selectedImage && (

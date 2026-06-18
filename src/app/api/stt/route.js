@@ -30,7 +30,7 @@ export async function POST(request) {
     let gcpEncoding = 'WEBM_OPUS';
     let configPayload = {
       languageCode: languageCode || 'en-US',
-      alternativeLanguageCodes: ['hi-IN']
+      alternativeLanguageCodes: ['hi-IN', 'en-IN'],
     };
 
     const mime = (mimeType || '').toLowerCase();
