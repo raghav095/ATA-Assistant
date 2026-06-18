@@ -23,7 +23,7 @@ export async function POST(request) {
     }
 
     if (!speechClient) {
-      return NextResponse.json({ error: 'STT Client not initialized.' }, { status: 500 });
+      return NextResponse.json({ error: 'STT Client not initialized.', useBrowserFallback: true }, { status: 500 });
     }
 
     // Adaptive encoding configuration based on browser media recorder mime type
@@ -56,6 +56,6 @@ export async function POST(request) {
     return NextResponse.json({ text: transcription || '' });
   } catch (error) {
     console.error('API STT Route Error:', error);
-    return NextResponse.json({ error: 'Failed to transcribe speech.', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to transcribe speech.', details: error.message, useBrowserFallback: true }, { status: 500 });
   }
 }
