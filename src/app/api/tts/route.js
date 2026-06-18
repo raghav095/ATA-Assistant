@@ -17,7 +17,7 @@ try {
 
 export async function POST(request) {
   try {
-    const { text, languageCode } = await request.json();
+    const { text, languageCode, language } = await request.json();
     if (!text) {
       return NextResponse.json({ error: 'Text is required.' }, { status: 400 });
     }

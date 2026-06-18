@@ -377,7 +377,8 @@ Current state:
     * Name: ${patientInfo.name || 'Anonymous'}
     * Age: ${patientInfo.age || 'Unknown'}
     * Biological Sex: ${patientInfo.sex || 'Unknown'}
-    * Pre-existing Medical History: ${patientInfo.preExistingHistory || 'None declared'}`;
+    * Pre-existing Medical History: ${patientInfo.preExistingHistory || 'None declared'}
+    * Preferred Language: ${patientInfo.language || 'English'}`;
       }
 
       const contents = [];
