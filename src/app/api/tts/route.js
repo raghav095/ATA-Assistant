@@ -17,7 +17,7 @@ try {
 
 export async function POST(request) {
   try {
-    const { text } = await request.json();
+    const { text, languageCode } = await request.json();
     if (!text) {
       return NextResponse.json({ error: 'Text is required.' }, { status: 400 });
     }
@@ -26,9 +26,13 @@ export async function POST(request) {
       return NextResponse.json({ error: 'TTS Client not initialized.', useBrowserFallback: true }, { status: 500 });
     }
 
+    const isHindi = languageCode === 'hi-IN' || /[\u0900-\u097F]/.test(text);
     const ttsRequest = {
       input: { text },
-      voice: { languageCode: 'en-US', name: 'en-US-Wavenet-F' },
+      voice: { 
+        languageCode: isHindi ? 'hi-IN' : 'en-US', 
+        name: isHindi ? 'hi-IN-Wavenet-F' : 'en-US-Wavenet-F' 
+      },
       audioConfig: { audioEncoding: 'MP3', pitch: 0, speakingRate: 1.05 },
     };
 

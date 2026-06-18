@@ -81,16 +81,29 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
   const t = combined.toLowerCase();
   const complaint = (symptomProfile?.primaryComplaint || '').toLowerCase();
 
+  // Hindi keyword lists for safety override audit
+  const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
+  const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
+  const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
+  const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
+  const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
+  const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
+
+  const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
+
   // 1. Cardiac override (Chest Pain + Arm/Jaw Pain or Crushing descriptors)
   const hasChestPain =
     t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') ||
-    complaint.includes('chest pain');
+    complaint.includes('chest pain') ||
+    matchesAny(t, hindiCardiacPain) || matchesAny(complaint, hindiCardiacPain);
+
   const hasRadiatingPain = isKeywordPositive(t, [
     'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain',
     'left arm', 'right arm', 'jaw pain', 'back pain'
-  ]);
+  ]) || matchesAny(t, hindiCardiacRadiating);
+
   const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent');
-  const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']);
+  const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']) || matchesAny(t, hindiCardiacCrushing);
 
   if (hasChestPain && (hasRadiatingPain || hasCardiacHistory || hasCrushing)) {
     return {
@@ -107,7 +120,8 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
     'face numb', 'arm weakness',
     'weakness on one side', 'numbness on one side', 'paralysis',
     'stroke', 'face drooping'
-  ]);
+  ]) || matchesAny(t, hindiStroke);
+
   if (hasStrokeSymptoms) {
     return {
       triggered: true,
@@ -118,10 +132,11 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
   }
 
   // 3. Thunderclap headache override
-  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache');
+  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache') || t.includes('सिरदर्द') || complaint.includes('सिरदर्द');
   const isThunderclap = isKeywordPositive(t, [
     'sudden', 'worst', 'thunderclap', 'exploding', 'instant'
-  ]);
+  ]) || matchesAny(t, hindiThunderclap);
+
   if (isHeadache && isThunderclap) {
     return {
       triggered: true,
@@ -135,7 +150,8 @@ function checkSafetyGuardrails(text, symptomProfile, chatHistory) {
   const hasBreathingDifficulty = isKeywordPositive(t, [
     'shortness of breath', 'difficulty breathing', "can't breathe", 'cant breathe',
     'struggling to breathe', 'gasping', 'asphyxia'
-  ]);
+  ]) || matchesAny(t, hindiRespiratory);
+
   if (hasBreathingDifficulty) {
     return {
       triggered: true,
@@ -252,6 +268,9 @@ Urgency Tiers — update 'urgencyEstimation' as you gain confidence:
 
 Closing Rule:
 - Once you set 'urgencyEstimation' to any value other than 'Unspecified' AND the patient profile has primaryComplaint, duration, severity, and at least one associated symptom or history entry, you are in the closing phase. Emit the closing message described above and do not ask another question.
+
+Language Rule (CRITICAL):
+- Detect the language of the patient's input. If the patient communicates in Hindi (or Hinglish), you must generate the conversational 'nextQuestion' in natural Hindi. If the patient communicates in English, respond in English.
 
 Current state:
 - Symptom Profile: ${JSON.stringify(symptomProfile || {})}

@@ -163,6 +163,7 @@ export default function AegisTriageApp() {
   const [voiceSessionStatus, setVoiceSessionStatus] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking'
   const [useLocalSTT, setUseLocalSTT] = useState(false);
   const recognitionRef = useRef(null);
+  const [inputLanguage, setInputLanguage] = useState('en-US');
 
   // Chat scroll anchor ref
   const chatBottomRef = useRef(null);
@@ -248,10 +249,11 @@ export default function AegisTriageApp() {
       utterance.pitch = 1.0;
       
       const voices = window.speechSynthesis.getVoices();
-      const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) || 
-                      voices.find(v => v.lang.startsWith('en')) || 
-                      voices[0];
-      if (enVoice) utterance.voice = enVoice;
+      const langPrefix = inputLanguage.split('-')[0];
+      const langVoice = voices.find(v => v.lang.startsWith(langPrefix) && v.name.includes('Google')) || 
+                        voices.find(v => v.lang.startsWith(langPrefix)) || 
+                        voices[0];
+      if (langVoice) utterance.voice = langVoice;
       
       if (onEndCallback) {
         utterance.onend = onEndCallback;
@@ -293,7 +295,7 @@ export default function AegisTriageApp() {
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = inputLanguage;
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -355,7 +357,7 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, languageCode: inputLanguage })
       });
       const data = await response.json();
       if (data.audioContent && !data.useBrowserFallback) {
@@ -399,7 +401,7 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, languageCode: inputLanguage })
       });
       const data = await response.json();
       if (capturedGeneration !== sessionGenerationRef.current) return;
@@ -496,7 +498,8 @@ export default function AegisTriageApp() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 audioContent: base64Audio,
-                mimeType: actualMime
+                mimeType: actualMime,
+                languageCode: inputLanguage
               })
             });
             const data = await response.json();
@@ -730,13 +733,23 @@ export default function AegisTriageApp() {
     const t = combined.toLowerCase();
     let matched = [];
 
+    // Hindi keyword lists for safety override audit
+    const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
+    const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
+    const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
+    const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
+    const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
+    const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
+
+    const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
+
     // 1. Cardiac check
-    const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina');
+    const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') || matchesAny(t, hindiCardiacPain);
     const hasRadiating = isKeywordPositive(t, [
       'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain',
-      'left arm', 'right arm', 'jaw pain'
-    ]);
-    const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']);
+      'left arm', 'right arm', 'jaw pain', 'back pain'
+    ]) || matchesAny(t, hindiCardiacRadiating);
+    const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']) || matchesAny(t, hindiCardiacCrushing);
     if (hasChestPain && (hasRadiating || hasCrushing)) {
       matched.push("Potential Cardiac Event");
     }
@@ -746,14 +759,14 @@ export default function AegisTriageApp() {
       'slurred', 'slur', 'speech', 'drooping', 'droop',
       'face numb', 'arm weakness',
       'weakness on one side', 'numbness on one side', 'stroke', 'face drooping'
-    ]);
+    ]) || matchesAny(t, hindiStroke);
     if (hasStroke) {
       matched.push("Potential Stroke (FAST)");
     }
 
     // 3. Thunderclap Headache check
-    const isHeadache = t.includes('headache') || t.includes('migraine');
-    const isSudden = isKeywordPositive(t, ['sudden', 'worst', 'thunderclap', 'exploding']);
+    const isHeadache = t.includes('headache') || t.includes('migraine') || t.includes('सिरदर्द');
+    const isSudden = isKeywordPositive(t, ['sudden', 'worst', 'thunderclap', 'exploding']) || matchesAny(t, hindiThunderclap);
     if (isHeadache && isSudden) {
       matched.push("Potential Thunderclap Headache");
     }
@@ -762,7 +775,7 @@ export default function AegisTriageApp() {
     const isBreathing = isKeywordPositive(t, [
       'shortness of breath', 'difficulty breathing', "can't breathe", 'cant breathe',
       'struggling to breathe', 'gasping'
-    ]);
+    ]) || matchesAny(t, hindiRespiratory);
     if (isBreathing) {
       matched.push("Potential Respiratory Distress");
     }
@@ -1238,7 +1251,17 @@ export default function AegisTriageApp() {
                       <span className="pulse-icon"><Stethoscope size={18} strokeWidth={2.2} /></span>
                       <h3>Intake Dialogue Stream</h3>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        id="language-selector"
+                        value={inputLanguage}
+                        onChange={(e) => setInputLanguage(e.target.value)}
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', height: 'auto', background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px' }}
+                      >
+                        <option value="en-US">🇬🇧 English</option>
+                        <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
+                      </select>
                       <button
                         onClick={startVoiceSession}
                         className="btn btn-primary btn-sm"
