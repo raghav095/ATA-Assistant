@@ -629,7 +629,7 @@ export default function AegisTriageApp() {
     const updatedHistory = [...chatHistory, { role: 'user', content: text }];
     setChatHistory(updatedHistory);
     setVoiceSessionStatus('thinking');
-    runLocalAudit(text);
+    runLocalAudit(text, chatHistory);
 
     try {
       const response = await fetch('/api/chat', {
@@ -686,33 +686,83 @@ export default function AegisTriageApp() {
   };
 
   // Safety checker client logs preview
-  const runLocalAudit = (text) => {
+  // Negation-aware keyword matcher. Mirrors the server-side helper in
+  // route.js so the Guardrails tab stays in sync with the Vertex AI override
+  // decision. A keyword is "positive" only if at least one occurrence sits
+  // inside a sentence that has no preceding negation cue within 35 chars.
+  const NEGATION_CUES = [
+    'no ', 'no,', 'no.', 'no!', 'no?', '\nno ',
+    'not ', "n't ", "n't,", "n't.", "n't!", "n't?",
+    'without ', 'denies ', 'deny ', 'denied ', 'never ',
+    'no signs of ', 'negative for '
+  ];
+  const SENTENCE_BOUNDARY_REGEX = /[.!?]\s+[A-Z]|[.!?]\s*$/;
+  const isKeywordPositive = (text, keywords) => {
+    if (!text) return false;
     const t = text.toLowerCase();
+    for (const kw of keywords) {
+      if (!kw) continue;
+      let idx = 0;
+      while ((idx = t.indexOf(kw, idx)) !== -1) {
+        const windowStart = Math.max(0, idx - 35);
+        const preceding = t.slice(windowStart, idx);
+        const crossedBoundary = SENTENCE_BOUNDARY_REGEX.test(preceding);
+        if (crossedBoundary) { idx += kw.length; continue; }
+        let negated = false;
+        for (const cue of NEGATION_CUES) {
+          if (preceding.includes(cue)) { negated = true; break; }
+        }
+        if (!negated) return true;
+        idx += kw.length;
+      }
+    }
+    return false;
+  };
+
+  const runLocalAudit = (text, history) => {
+    // Aggregate the current message with prior user turns so a multi-turn
+    // symptom combination (e.g. chest pain this turn, arm pain last turn)
+    // surfaces in the audit log just as it would on the server.
+    const userTurns = (history || [])
+      .filter(m => m && m.role === 'user' && typeof m.content === 'string')
+      .map(m => m.content);
+    const combined = [userTurns.join(' \n '), text || ''].filter(Boolean).join(' \n ');
+    const t = combined.toLowerCase();
     let matched = [];
-    
+
     // 1. Cardiac check
     const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina');
-    const hasRadiating = t.includes('arm pain') || t.includes('pain in arm') || t.includes('pain radiating') || t.includes('shoulder pain') || t.includes('left arm') || t.includes('right arm') || t.includes('jaw pain');
-    const hasCrushing = t.includes('crushing') || t.includes('pressure') || t.includes('tightness');
+    const hasRadiating = isKeywordPositive(t, [
+      'arm pain', 'pain in arm', 'pain radiating', 'shoulder pain',
+      'left arm', 'right arm', 'jaw pain'
+    ]);
+    const hasCrushing = isKeywordPositive(t, ['crushing', 'pressure', 'tightness']);
     if (hasChestPain && (hasRadiating || hasCrushing)) {
       matched.push("Potential Cardiac Event");
     }
 
     // 2. Stroke check
-    const hasStroke = t.includes('slur') || t.includes('speech') || t.includes('droop') || t.includes('face numb') || t.includes('arm weakness') || t.includes('weakness on one side') || t.includes('numbness on one side') || t.includes('stroke') || t.includes('face drooping');
+    const hasStroke = isKeywordPositive(t, [
+      'slurred', 'slur', 'speech', 'drooping', 'droop',
+      'face numb', 'arm weakness',
+      'weakness on one side', 'numbness on one side', 'stroke', 'face drooping'
+    ]);
     if (hasStroke) {
       matched.push("Potential Stroke (FAST)");
     }
 
     // 3. Thunderclap Headache check
     const isHeadache = t.includes('headache') || t.includes('migraine');
-    const isSudden = t.includes('sudden') || t.includes('worst') || t.includes('thunderclap') || t.includes('exploding');
+    const isSudden = isKeywordPositive(t, ['sudden', 'worst', 'thunderclap', 'exploding']);
     if (isHeadache && isSudden) {
       matched.push("Potential Thunderclap Headache");
     }
 
     // 4. Breathing check
-    const isBreathing = t.includes('shortness of breath') || t.includes('difficulty breathing') || t.includes('cant breathe') || t.includes('struggling to breathe') || t.includes('gasping');
+    const isBreathing = isKeywordPositive(t, [
+      'shortness of breath', 'difficulty breathing', "can't breathe", 'cant breathe',
+      'struggling to breathe', 'gasping'
+    ]);
     if (isBreathing) {
       matched.push("Potential Respiratory Distress");
     }
@@ -748,7 +798,7 @@ export default function AegisTriageApp() {
     setIsTyping(true);
 
     // Write audit log entry
-    runLocalAudit(text);
+    runLocalAudit(text, chatHistory);
 
     try {
       const response = await fetch('/api/chat', {
@@ -1241,6 +1291,47 @@ export default function AegisTriageApp() {
                         </div>
                       </div>
                     )}
+
+                    {/* Triage Completion Card — surfaces once the AI has set
+                        a non-Unspecified urgency and the dialogue has not been
+                        intercepted by a safety override. Gives the patient an
+                        explicit in-chat hand-off to the care pathway report. */}
+                    {currentUrgency !== 'Unspecified' && !guardrailTriggered && (
+                      <div className="triage-complete-card" role="status" aria-live="polite">
+                        <div className="triage-complete-header">
+                          <span className="triage-complete-icon">
+                            <CheckCircle2 size={18} strokeWidth={2.4} />
+                          </span>
+                          <div>
+                            <h4>Clinical intake complete</h4>
+                            <p>Estimated urgency: <strong>{activeUrgencyGuide.title}</strong></p>
+                          </div>
+                        </div>
+                        <p className="triage-complete-body">
+                          Based on your responses, we've drafted a triage assessment.
+                          Review your care pathway and clinician handover report below.
+                        </p>
+                        <div className="triage-complete-actions">
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => { switchTab('tab-pathway'); compileReport(); }}
+                            disabled={chatHistory.length < 2}
+                          >
+                            <FileText size={14} strokeWidth={2.4} style={{ marginRight: '0.4rem' }} />
+                            View Care Pathway
+                            <ChevronRight size={14} strokeWidth={2.4} style={{ marginLeft: '0.3rem' }} />
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => switchTab('tab-pathway')}
+                            title="Open the Triage & Pathway tab"
+                          >
+                            See pathway only
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div ref={chatBottomRef}></div>
                   </div>
 
