@@ -163,6 +163,7 @@ export default function AegisTriageApp() {
   const [voiceSessionStatus, setVoiceSessionStatus] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking'
   const [useLocalSTT, setUseLocalSTT] = useState(false);
   const recognitionRef = useRef(null);
+  const [inputLanguage, setInputLanguage] = useState('en-US');
 
   // Chat scroll anchor ref
   const chatBottomRef = useRef(null);
@@ -248,10 +249,11 @@ export default function AegisTriageApp() {
       utterance.pitch = 1.0;
       
       const voices = window.speechSynthesis.getVoices();
-      const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) || 
-                      voices.find(v => v.lang.startsWith('en')) || 
-                      voices[0];
-      if (enVoice) utterance.voice = enVoice;
+      const langPrefix = inputLanguage.split('-')[0];
+      const langVoice = voices.find(v => v.lang.startsWith(langPrefix) && v.name.includes('Google')) || 
+                        voices.find(v => v.lang.startsWith(langPrefix)) || 
+                        voices[0];
+      if (langVoice) utterance.voice = langVoice;
       
       if (onEndCallback) {
         utterance.onend = onEndCallback;
@@ -293,7 +295,7 @@ export default function AegisTriageApp() {
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = inputLanguage;
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -355,7 +357,7 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, languageCode: inputLanguage })
       });
       const data = await response.json();
       if (data.audioContent && !data.useBrowserFallback) {
@@ -399,7 +401,7 @@ export default function AegisTriageApp() {
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, languageCode: inputLanguage })
       });
       const data = await response.json();
       if (capturedGeneration !== sessionGenerationRef.current) return;
@@ -496,7 +498,8 @@ export default function AegisTriageApp() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 audioContent: base64Audio,
-                mimeType: actualMime
+                mimeType: actualMime,
+                languageCode: inputLanguage
               })
             });
             const data = await response.json();
@@ -1188,7 +1191,17 @@ export default function AegisTriageApp() {
                       <span className="pulse-icon"><Stethoscope size={18} strokeWidth={2.2} /></span>
                       <h3>Intake Dialogue Stream</h3>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        id="language-selector"
+                        value={inputLanguage}
+                        onChange={(e) => setInputLanguage(e.target.value)}
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', height: 'auto', background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px' }}
+                      >
+                        <option value="en-US">🇬🇧 English</option>
+                        <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
+                      </select>
                       <button
                         onClick={startVoiceSession}
                         className="btn btn-primary btn-sm"

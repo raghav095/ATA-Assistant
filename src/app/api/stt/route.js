@@ -17,7 +17,7 @@ try {
 
 export async function POST(request) {
   try {
-    const { audioContent, mimeType } = await request.json();
+    const { audioContent, mimeType, languageCode } = await request.json();
     if (!audioContent) {
       return NextResponse.json({ error: 'Audio content (base64) is required.' }, { status: 400 });
     }
@@ -29,7 +29,7 @@ export async function POST(request) {
     // Adaptive encoding configuration based on browser media recorder mime type
     let gcpEncoding = 'WEBM_OPUS';
     let configPayload = {
-      languageCode: 'en-US',
+      languageCode: languageCode || 'en-US',
     };
 
     const mime = (mimeType || '').toLowerCase();
