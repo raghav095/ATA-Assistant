@@ -189,7 +189,6 @@ export default function AegisTriageApp() {
           setPatientInfo(parsed);
           setCheckInInput(parsed);
           setIsCheckedIn(true);
-          setInputLanguage(parsed.language === 'Hindi/Hinglish' ? 'hi-IN' : 'en-US');
           setSymptomProfile(prev => ({
             ...prev,
             history: parsed.preExistingHistory || ''
@@ -210,6 +209,26 @@ export default function AegisTriageApp() {
       console.error('Failed to load triage history from localStorage', e);
     }
   }, []);
+
+  // Auto-detect conversation language from chat content.
+  // Scans the latest user and assistant messages for Devanagari script.
+  // Locks inputLanguage dynamically so STT/TTS use the right voice.
+  useEffect(() => {
+    if (chatHistory.length <= 1) return; // only the welcome message, no detection yet
+
+    const DEVANAGARI_RE = /[\u0900-\u097F]/;
+    // Check the last 4 messages (most recent context)
+    const recentMessages = chatHistory.slice(-4);
+    const hasDevanagari = recentMessages.some(msg => DEVANAGARI_RE.test(msg.content || ''));
+
+    const detectedLang = hasDevanagari ? 'hi-IN' : 'en-US';
+    setInputLanguage(prev => {
+      if (prev !== detectedLang) {
+        console.log(`[Language Auto-Detect] Switched to ${detectedLang}`);
+      }
+      return detectedLang;
+    });
+  }, [chatHistory]);
 
   // Toast Trigger Helper
   const triggerToast = (message) => {
@@ -385,7 +404,10 @@ export default function AegisTriageApp() {
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = inputLanguage;
+    // On first turn (only welcome message), allow multi-language detection.
+    // Otherwise lock to detected conversation language.
+    const isFirstBrowserTurn = chatHistory.length <= 1;
+    recognition.lang = isFirstBrowserTurn ? 'en-US' : inputLanguage;
 
     recognition.onstart = () => {
       setIsRecording(true);
@@ -597,7 +619,8 @@ export default function AegisTriageApp() {
               body: JSON.stringify({
                 audioContent: base64Audio,
                 mimeType: actualMime,
-                languageCode: inputLanguage
+                languageCode: inputLanguage,
+                isFirstTurn: chatHistory.length <= 1
               })
             });
             const data = await response.json();
@@ -1348,7 +1371,7 @@ export default function AegisTriageApp() {
               e.preventDefault();
               if (!checkInInput.name.trim()) return;
               setPatientInfo(checkInInput);
-              setInputLanguage(checkInInput.language === 'Hindi/Hinglish' ? 'hi-IN' : 'en-US');
+              // Language is now auto-detected from conversation, no pre-set needed
               setSymptomProfile(prev => ({
                 ...prev,
                 history: checkInInput.preExistingHistory || ''
@@ -1637,16 +1660,14 @@ export default function AegisTriageApp() {
                       <h3>Intake Dialogue Stream</h3>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <select
-                        id="language-selector"
-                        value={inputLanguage}
-                        onChange={(e) => setInputLanguage(e.target.value)}
+                      <span
                         className="btn btn-secondary btn-sm"
-                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', height: 'auto', background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px' }}
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.7rem', height: 'auto', background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                        title="Language is auto-detected from your conversation"
                       >
-                        <option value="en-US">🇬🇧 English</option>
-                        <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
-                      </select>
+                        {inputLanguage === 'hi-IN' ? '🇮🇳 Hindi' : '🇬🇧 English'}
+                        <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>AUTO</span>
+                      </span>
                       <button
                         onClick={startVoiceSession}
                         className="btn btn-primary btn-sm"
