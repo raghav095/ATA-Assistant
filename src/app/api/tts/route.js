@@ -31,7 +31,7 @@ export async function POST(request) {
       input: { text },
       voice: { 
         languageCode: isHindi ? 'hi-IN' : 'en-US', 
-        name: isHindi ? 'hi-IN-Wavenet-D' : 'en-US-Wavenet-F' 
+        name: isHindi ? 'hi-IN-Wavenet-F' : 'en-US-Wavenet-F' 
       },
       audioConfig: { audioEncoding: 'MP3', pitch: 0, speakingRate: 1.05 },
     };

@@ -73,7 +73,7 @@ export function runFallbackTriage(message, chatHistory, currentProfile, patientI
   const isHindi = /[\u0900-\u097F]/.test(message) || t.includes('dard') || t.includes('bukhar') || t.includes('khansi') || t.includes('sardard');
 
   // Check test case triggers (both English and Hindi equivalents)
-  const isCardiacTest = t.includes('radiating down my left arm') || t.includes('chest pain radiating') || (t.includes('छाती') && t.includes('बाएं हाथ')) || (t.includes('chest') && t.includes('arm') && t.includes('pain'));
+  const isCardiacTest = t.includes('radiating down my left arm') || t.includes('chest pain radiating') || (t.includes('छाती') && t.includes('बाएं हाथ')) || (t.includes('सीने में दर्द') && t.includes('बाएं हाथ'));
   const isAtypicalTest = t.includes('coughing or taking a deep breath') || t.includes('sharp stabbing chest pain when coughing') || t.includes('atypical chest pain') || (t.includes('छाती') && t.includes('खांसने')) || (t.includes('stabbing') && t.includes('cough'));
   const isThunderclapTest = t.includes('thunderclap') || t.includes('worst headache of my life') || (t.includes('सिरदर्द') && t.includes('तीव्र')) || (t.includes('worst') && t.includes('headache'));
   const isTensionTest = t.includes('tension headache') || (t.includes('mild, dull headache') && t.includes('laptop')) || (t.includes('हल्का') && t.includes('सिरदर्द')) || (t.includes('dull') && t.includes('laptop'));

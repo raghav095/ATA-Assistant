@@ -24,12 +24,27 @@ function checkSafetyGuardrails(text, symptomProfile) {
   const t = (text || '').toLowerCase();
   const complaint = (symptomProfile?.primaryComplaint || '').toLowerCase();
   
-  // 1. Cardiac override (Chest Pain + Arm/Jaw Pain or Crushing descriptors)
-  const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') || complaint.includes('chest pain');
-  const hasRadiatingPain = t.includes('arm pain') || t.includes('pain in arm') || t.includes('pain radiating') || t.includes('shoulder pain') || t.includes('left arm') || t.includes('right arm') || t.includes('jaw pain') || t.includes('back pain');
-  const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent');
+  // Hindi keyword lists for safety override audit
+  const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
+  const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
+  const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
+  const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
+  const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
+  const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
 
-  if (hasChestPain && (hasRadiatingPain || hasCardiacHistory || t.includes('crushing') || t.includes('pressure') || t.includes('tightness'))) {
+  const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
+
+  // 1. Cardiac override (Chest Pain + Arm/Jaw Pain or Crushing descriptors)
+  const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') || complaint.includes('chest pain') ||
+                       matchesAny(t, hindiCardiacPain) || matchesAny(complaint, hindiCardiacPain);
+                       
+  const hasRadiatingPain = t.includes('arm pain') || t.includes('pain in arm') || t.includes('pain radiating') || t.includes('shoulder pain') || t.includes('left arm') || t.includes('right arm') || t.includes('jaw pain') || t.includes('back pain') ||
+                           matchesAny(t, hindiCardiacRadiating);
+                           
+  const hasCardiacHistory = t.includes('heart condition') || t.includes('bypass') || t.includes('stent');
+  const hasCrushingPressure = t.includes('crushing') || t.includes('pressure') || t.includes('tightness') || matchesAny(t, hindiCardiacCrushing);
+
+  if (hasChestPain && (hasRadiatingPain || hasCardiacHistory || hasCrushingPressure)) {
     return {
       triggered: true,
       reason: "Potential Cardiac Event (Chest Pain with Radiating Pain/Crushing Pressure)",
@@ -39,7 +54,8 @@ function checkSafetyGuardrails(text, symptomProfile) {
   }
 
   // 2. Stroke override (FAST symptoms)
-  const hasStrokeSymptoms = t.includes('slur') || t.includes('speech') || t.includes('droop') || t.includes('face numb') || t.includes('arm weakness') || t.includes('weakness on one side') || t.includes('numbness on one side') || t.includes('paralysis') || t.includes('stroke') || t.includes('face drooping');
+  const hasStrokeSymptoms = t.includes('slur') || t.includes('speech') || t.includes('droop') || t.includes('face numb') || t.includes('arm weakness') || t.includes('weakness on one side') || t.includes('numbness on one side') || t.includes('paralysis') || t.includes('stroke') || t.includes('face drooping') ||
+                            matchesAny(t, hindiStroke);
   if (hasStrokeSymptoms) {
     return {
       triggered: true,
@@ -50,8 +66,8 @@ function checkSafetyGuardrails(text, symptomProfile) {
   }
 
   // 3. Thunderclap headache override
-  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache');
-  const isThunderclap = t.includes('sudden') || t.includes('worst') || t.includes('thunderclap') || t.includes('exploding') || t.includes('instant');
+  const isHeadache = t.includes('headache') || t.includes('migraine') || complaint.includes('headache') || t.includes('सिरदर्द') || complaint.includes('सिरदर्द');
+  const isThunderclap = t.includes('sudden') || t.includes('worst') || t.includes('thunderclap') || t.includes('exploding') || t.includes('instant') || matchesAny(t, hindiThunderclap);
   if (isHeadache && isThunderclap) {
     return {
       triggered: true,
@@ -62,7 +78,7 @@ function checkSafetyGuardrails(text, symptomProfile) {
   }
 
   // 4. Severe breathing difficulty
-  const hasBreathingDifficulty = t.includes('shortness of breath') || t.includes('difficulty breathing') || t.includes('cant breathe') || t.includes('struggling to breathe') || t.includes('gasping') || t.includes('asphyxia');
+  const hasBreathingDifficulty = t.includes('shortness of breath') || t.includes('difficulty breathing') || t.includes('cant breathe') || t.includes('struggling to breathe') || t.includes('gasping') || t.includes('asphyxia') || matchesAny(t, hindiRespiratory);
   if (hasBreathingDifficulty) {
     return {
       triggered: true,
@@ -155,6 +171,7 @@ export async function POST(request) {
      - 'GP Urgent': needs same-day general practitioner attention.
      - 'GP Routine': needs attention within a few days or a week.
      - 'Self-Care': can be managed at home with over-the-counter remedies and rest.
+  7. Language Rule: Detect the language of the patient's input. If the patient communicates in Hindi (or Hinglish), you must generate the conversational 'nextQuestion' in natural Hindi. If the patient communicates in English, respond in English.
   
   Current state:
   - Symptom Profile: ${JSON.stringify(symptomProfile || {})}`;

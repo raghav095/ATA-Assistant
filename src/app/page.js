@@ -693,29 +693,39 @@ export default function AegisTriageApp() {
     const t = text.toLowerCase();
     let matched = [];
     
+    // Hindi keyword lists for safety override audit
+    const hindiCardiacPain = ['सीने में दर्द', 'छाती में दर्द', 'छाती में खिंचाव', 'सीने में खिंचाव', 'दिल में दर्द'];
+    const hindiCardiacRadiating = ['बाएं हाथ में दर्द', 'दाएं हाथ में दर्द', 'हाथ में दर्द', 'कंधे में दर्द', 'गर्दन में दर्द', 'जबड़े में दर्द', 'पीठ में दर्द'];
+    const hindiCardiacCrushing = ['दबाव', 'भारीपन', 'जकड़न'];
+    const hindiStroke = ['बोलने में दिक्कत', 'आवाज़ लड़खड़ाना', 'बोल नहीं पा रहे', 'हकलाना', 'चेहरे का सुन्न होना', 'मुंह टेढ़ा होना', 'लकवा', 'चेहरे की कमजोरी', 'हाथ में कमजोरी', 'हाथ सुन्न होना'];
+    const hindiThunderclap = ['अचानक तेज़ सिरदर्द', 'भयंकर सिरदर्द', 'अब तक का सबसे बुरा सिरदर्द'];
+    const hindiRespiratory = ['साँस लेने में तकलीफ', 'साँस फूलना', 'साँस की दिक्कत'];
+
+    const matchesAny = (str, list) => list.some(keyword => str.includes(keyword));
+
     // 1. Cardiac check
-    const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina');
-    const hasRadiating = t.includes('arm pain') || t.includes('pain in arm') || t.includes('pain radiating') || t.includes('shoulder pain') || t.includes('left arm') || t.includes('right arm') || t.includes('jaw pain');
-    const hasCrushing = t.includes('crushing') || t.includes('pressure') || t.includes('tightness');
+    const hasChestPain = t.includes('chest pain') || t.includes('heart pain') || t.includes('angina') || matchesAny(t, hindiCardiacPain);
+    const hasRadiating = t.includes('arm pain') || t.includes('pain in arm') || t.includes('pain radiating') || t.includes('shoulder pain') || t.includes('left arm') || t.includes('right arm') || t.includes('jaw pain') || t.includes('back pain') || matchesAny(t, hindiCardiacRadiating);
+    const hasCrushing = t.includes('crushing') || t.includes('pressure') || t.includes('tightness') || matchesAny(t, hindiCardiacCrushing);
     if (hasChestPain && (hasRadiating || hasCrushing)) {
       matched.push("Potential Cardiac Event");
     }
 
     // 2. Stroke check
-    const hasStroke = t.includes('slur') || t.includes('speech') || t.includes('droop') || t.includes('face numb') || t.includes('arm weakness') || t.includes('weakness on one side') || t.includes('numbness on one side') || t.includes('stroke') || t.includes('face drooping');
+    const hasStroke = t.includes('slur') || t.includes('speech') || t.includes('droop') || t.includes('face numb') || t.includes('arm weakness') || t.includes('weakness on one side') || t.includes('numbness on one side') || t.includes('stroke') || t.includes('face drooping') || matchesAny(t, hindiStroke);
     if (hasStroke) {
       matched.push("Potential Stroke (FAST)");
     }
 
     // 3. Thunderclap Headache check
-    const isHeadache = t.includes('headache') || t.includes('migraine');
-    const isSudden = t.includes('sudden') || t.includes('worst') || t.includes('thunderclap') || t.includes('exploding');
+    const isHeadache = t.includes('headache') || t.includes('migraine') || t.includes('सिरदर्द');
+    const isSudden = t.includes('sudden') || t.includes('worst') || t.includes('thunderclap') || t.includes('exploding') || matchesAny(t, hindiThunderclap);
     if (isHeadache && isSudden) {
       matched.push("Potential Thunderclap Headache");
     }
 
     // 4. Breathing check
-    const isBreathing = t.includes('shortness of breath') || t.includes('difficulty breathing') || t.includes('cant breathe') || t.includes('struggling to breathe') || t.includes('gasping');
+    const isBreathing = t.includes('shortness of breath') || t.includes('difficulty breathing') || t.includes('cant breathe') || t.includes('struggling to breathe') || t.includes('gasping') || matchesAny(t, hindiRespiratory);
     if (isBreathing) {
       matched.push("Potential Respiratory Distress");
     }
