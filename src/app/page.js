@@ -169,6 +169,7 @@ export default function AegisTriageApp() {
   const [useLocalSTT, setUseLocalSTT] = useState(false);
   const recognitionRef = useRef(null);
   const [inputLanguage, setInputLanguage] = useState('en-US');
+  const [isLanguageLocked, setIsLanguageLocked] = useState(false);
 
   // Chat scroll anchor ref
   const chatBottomRef = useRef(null);
@@ -193,6 +194,21 @@ export default function AegisTriageApp() {
             ...prev,
             history: parsed.preExistingHistory || ''
           }));
+
+          // Set language and update initial greeting if checked in
+          const chosenLang = parsed.language || 'English';
+          setIsLanguageLocked(true);
+          if (chosenLang === 'Hindi/Hinglish') {
+            setInputLanguage('hi-IN');
+            setChatHistory([
+              { role: 'assistant', content: 'एजिस क्लिनिकल ट्राइएज में आपका स्वागत है। कृपया उन लक्षणों का वर्णन करें जिन्हें आप आज महसूस कर रहे हैं और मुझे बताएं कि वे कब शुरू हुए थे।' }
+            ]);
+          } else {
+            setInputLanguage('en-US');
+            setChatHistory([
+              { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
+            ]);
+          }
         }
       }
     } catch (e) {
@@ -214,6 +230,7 @@ export default function AegisTriageApp() {
   // Scans the latest user and assistant messages for Devanagari script.
   // Locks inputLanguage dynamically so STT/TTS use the right voice.
   useEffect(() => {
+    if (isLanguageLocked) return; // Skip auto-detection if manually locked!
     if (chatHistory.length <= 1) return; // only the welcome message, no detection yet
 
     const DEVANAGARI_RE = /[\u0900-\u097F]/;
@@ -273,9 +290,19 @@ export default function AegisTriageApp() {
         console.error('Failed to clean up mediaRecorder tracks:', e);
       }
     }
-    setChatHistory([
-      { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
-    ]);
+    const chosenLang = patientInfo?.language || 'English';
+    setIsLanguageLocked(true); // Lock language
+    if (chosenLang === 'Hindi/Hinglish') {
+      setInputLanguage('hi-IN');
+      setChatHistory([
+        { role: 'assistant', content: 'एजिस क्लिनिकल ट्राइएज में आपका स्वागत है। कृपया उन लक्षणों का वर्णन करें जिन्हें आप आज महसूस कर रहे हैं और मुझे बताएं कि वे कब शुरू हुए थे।' }
+      ]);
+    } else {
+      setInputLanguage('en-US');
+      setChatHistory([
+        { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
+      ]);
+    }
     setSymptomProfile({
       primaryComplaint: '',
       duration: '',
@@ -620,7 +647,7 @@ export default function AegisTriageApp() {
                 audioContent: base64Audio,
                 mimeType: actualMime,
                 languageCode: inputLanguage,
-                isFirstTurn: chatHistory.length <= 1
+                isFirstTurn: (chatHistory.length <= 1) && !isLanguageLocked
               })
             });
             const data = await response.json();
@@ -1371,7 +1398,20 @@ export default function AegisTriageApp() {
               e.preventDefault();
               if (!checkInInput.name.trim()) return;
               setPatientInfo(checkInInput);
-              // Language is now auto-detected from conversation, no pre-set needed
+              // Set language and initial greeting based on selection
+              const chosenLang = checkInInput.language || 'English';
+              setIsLanguageLocked(true); // Lock language
+              if (chosenLang === 'Hindi/Hinglish') {
+                setInputLanguage('hi-IN');
+                setChatHistory([
+                  { role: 'assistant', content: 'एजिस क्लिनिकल ट्राइएज में आपका स्वागत है। कृपया उन लक्षणों का वर्णन करें जिन्हें आप आज महसूस कर रहे हैं और मुझे बताएं कि वे कब शुरू हुए थे।' }
+                ]);
+              } else {
+                setInputLanguage('en-US');
+                setChatHistory([
+                  { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
+                ]);
+              }
               setSymptomProfile(prev => ({
                 ...prev,
                 history: checkInInput.preExistingHistory || ''
@@ -1660,14 +1700,56 @@ export default function AegisTriageApp() {
                       <h3>Intake Dialogue Stream</h3>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <span
+                      <button
+                        onClick={() => {
+                          const nextLang = inputLanguage === 'hi-IN' ? 'en-US' : 'hi-IN';
+                          setInputLanguage(nextLang);
+                          setIsLanguageLocked(true);
+
+                          // If conversation hasn't started yet (only greeting present), update welcome message
+                          if (chatHistory.length <= 1) {
+                            if (nextLang === 'hi-IN') {
+                              setChatHistory([
+                                { role: 'assistant', content: 'एजिस क्लिनिकल ट्राइएज में आपका स्वागत है। कृपया उन लक्षणों का वर्णन करें जिन्हें आप आज महसूस कर रहे हैं और मुझे बताएं कि वे कब शुरू हुए थे।' }
+                              ]);
+                            } else {
+                              setChatHistory([
+                                { role: 'assistant', content: 'Welcome to Aegis Clinical Triage. Please describe the symptoms you are experiencing today and tell me when they started.' }
+                              ]);
+                            }
+                          }
+                          triggerToast(`Language switched to ${nextLang === 'hi-IN' ? 'Hindi' : 'English'}`);
+                        }}
                         className="btn btn-secondary btn-sm"
-                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.7rem', height: 'auto', background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                        title="Language is auto-detected from your conversation"
+                        style={{
+                          padding: '0.35rem 0.6rem',
+                          fontSize: '0.7rem',
+                          height: 'auto',
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          color: 'var(--text-secondary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                        }}
+                        title="Click to toggle language manually, or let it auto-detect from chat"
                       >
                         {inputLanguage === 'hi-IN' ? '🇮🇳 Hindi' : '🇬🇧 English'}
-                        <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>AUTO</span>
-                      </span>
+                        <span style={{
+                          fontSize: '0.6rem',
+                          opacity: 0.8,
+                          background: 'rgba(255,255,255,0.1)',
+                          padding: '1px 4px',
+                          borderRadius: '3px',
+                          border: '1px solid rgba(255,255,255,0.05)',
+                          fontWeight: 'bold'
+                        }}>
+                          Click to Switch
+                        </span>
+                      </button>
                       <button
                         onClick={startVoiceSession}
                         className="btn btn-primary btn-sm"
@@ -1875,6 +1957,7 @@ export default function AegisTriageApp() {
                           console.error(err);
                         }
                         setIsCheckedIn(false);
+                        setIsLanguageLocked(false); // Clear the lock on checkout!
                         setPatientInfo({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
                         setCheckInInput({ name: '', age: '', sex: 'Male', preExistingHistory: '' });
                         triggerToast('Patient checked out successfully.');
