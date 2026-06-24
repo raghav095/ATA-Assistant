@@ -370,19 +370,40 @@ export async function POST(request) {
       // Build "Already Covered Topics" from symptomProfile
       const coveredTopics = [];
       const sp = symptomProfile || {};
-      if (sp.primaryComplaint && sp.primaryComplaint !== 'No symptoms reported yet') {
+
+      if (sp.primaryComplaint &&
+          sp.primaryComplaint !== 'No symptoms reported yet' &&
+          sp.primaryComplaint !== 'Unknown complaint' &&
+          sp.primaryComplaint !== 'अज्ञात शिकायत') {
         coveredTopics.push(`Primary Complaint: "${sp.primaryComplaint}" — DO NOT ask about this again.`);
       }
-      if (sp.duration && sp.duration !== 'N/A' && sp.duration !== '') {
+
+      if (sp.duration &&
+          sp.duration !== 'N/A' &&
+          sp.duration !== '' &&
+          !/unspecified|unknown|not provided|हाल ही में/i.test(sp.duration)) {
         coveredTopics.push(`Duration: "${sp.duration}" — DO NOT ask how long symptoms have lasted.`);
       }
-      if (sp.severity && sp.severity !== 'Unspecified') {
+
+      if (sp.severity &&
+          sp.severity !== 'Unspecified' &&
+          sp.severity !== 'N/A') {
         coveredTopics.push(`Severity: "${sp.severity}" — DO NOT ask about pain level or severity.`);
       }
+
       if (sp.associatedSymptoms && sp.associatedSymptoms.length > 0) {
-        coveredTopics.push(`Associated Symptoms: [${sp.associatedSymptoms.join(', ')}] — DO NOT ask about symptoms already listed.`);
+        // Only block if we have actual named symptoms, not fallback declarations
+        const hasActualSymptoms = sp.associatedSymptoms.some(s => s !== 'None declared' && s !== 'कोई घोषित नहीं');
+        if (hasActualSymptoms) {
+          coveredTopics.push(`Associated Symptoms: [${sp.associatedSymptoms.join(', ')}] — DO NOT ask about symptoms already listed.`);
+        }
       }
-      if (sp.history && sp.history !== '' && sp.history !== 'None declared') {
+
+      if (sp.history &&
+          sp.history !== '' &&
+          sp.history !== 'None declared' &&
+          sp.history !== 'कोई घोषित नहीं' &&
+          !/unspecified|unknown|not provided/i.test(sp.history)) {
         coveredTopics.push(`Medical History: "${sp.history}" — DO NOT ask about medical history again.`);
       }
 
